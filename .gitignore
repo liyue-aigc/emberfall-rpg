@@ -1,0 +1,9 @@
+node_modules/
+dist/
+vite.log
+vite-error.log
+*.local
+.vercel/
+server/.vercel/
+server/node_modules/
+server/.env.local

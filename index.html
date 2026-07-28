@@ -1,0 +1,288 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#071315" />
+    <meta
+      name="description"
+      content="余烬深渊：一个使用 Three.js 制作的本地 3D 动作 RPG 原型。"
+    />
+    <title>余烬深渊 · Emberfall</title>
+  </head>
+  <body>
+    <main id="game-shell" aria-label="余烬深渊游戏">
+      <canvas id="game-canvas"></canvas>
+
+      <div class="vignette" aria-hidden="true"></div>
+      <div class="grain" aria-hidden="true"></div>
+
+      <header class="topbar hud-layer">
+        <div class="brand-lockup">
+          <div class="sigil" aria-hidden="true">
+            <span></span>
+          </div>
+          <div>
+            <p class="eyebrow">铜锈纪 · 试炼地窟</p>
+            <h1>余烬深渊</h1>
+          </div>
+        </div>
+
+        <div class="run-state">
+          <span id="zone-label">下层回廊</span>
+          <strong id="wave-label">浪潮 1</strong>
+        </div>
+
+        <div class="top-actions">
+          <button id="ranking-button" class="ranking-button" type="button" aria-label="打开排行榜">
+            <span class="ranking-glyph" aria-hidden="true">◆</span>
+            <span>排行榜</span>
+          </button>
+          <button id="pause-button" class="icon-button" type="button" aria-label="暂停游戏">
+            <span></span><span></span>
+          </button>
+        </div>
+      </header>
+
+      <section class="left-rail hud-layer" aria-label="角色状态">
+        <div class="portrait-frame">
+          <div class="portrait-mark" aria-hidden="true"></div>
+          <span id="level-label">01</span>
+        </div>
+
+        <div class="vitals">
+          <div class="meter health-meter">
+            <div class="meter-copy">
+              <span>生命</span>
+              <strong id="health-label">100 / 100</strong>
+            </div>
+            <div class="meter-track">
+              <div id="health-fill" class="meter-fill"></div>
+              <div id="shield-fill" class="shield-fill"></div>
+            </div>
+          </div>
+
+          <div class="meter xp-meter">
+            <div class="meter-copy">
+              <span>灵火</span>
+              <strong id="xp-label">0 / 100</strong>
+            </div>
+            <div class="meter-track">
+              <div id="xp-fill" class="meter-fill"></div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <aside class="objective-panel hud-layer" aria-label="当前目标">
+        <p class="panel-kicker">当前试炼</p>
+        <h2 id="objective-title">清除回廊中的腐化物</h2>
+        <div class="objective-progress">
+          <span id="objective-text">剩余 0 个敌人</span>
+          <span id="objective-percent">0%</span>
+        </div>
+        <div class="objective-track">
+          <div id="objective-fill"></div>
+        </div>
+        <div class="stat-line">
+          <span>伤害 <b id="damage-stat">18</b></span>
+          <span>护甲 <b id="armor-stat">4</b></span>
+          <span>余烬 <b id="shard-stat">0</b></span>
+        </div>
+        <div class="score-line">
+          <span>本局积分</span>
+          <strong id="current-score">0</strong>
+        </div>
+      </aside>
+
+      <canvas id="minimap" class="minimap hud-layer" width="160" height="160" aria-label="小地图"></canvas>
+
+      <section class="loot-feed hud-layer" id="loot-feed" aria-live="polite"></section>
+
+      <section class="bottom-hud hud-layer" aria-label="技能栏">
+        <div class="potion-block">
+          <button id="potion-button" class="skill-button potion" type="button" aria-label="使用疗愈药剂">
+            <span class="skill-icon">✦</span>
+            <span class="keycap">R</span>
+            <span id="potion-count" class="charge">3</span>
+          </button>
+          <span>药剂</span>
+        </div>
+
+        <div class="skill-belt">
+          <button class="skill-button" data-skill="attack" type="button" aria-label="火矢">
+            <span class="skill-icon bolt-icon"></span>
+            <span class="keycap">空格</span>
+            <span class="cooldown-sweep"></span>
+          </button>
+          <button class="skill-button" data-skill="nova" type="button" aria-label="余烬震环">
+            <span class="skill-icon nova-icon"></span>
+            <span class="keycap">Q</span>
+            <span class="cooldown-sweep"></span>
+          </button>
+          <button class="skill-button" data-skill="dash" type="button" aria-label="裂隙步">
+            <span class="skill-icon dash-icon"></span>
+            <span class="keycap">E</span>
+            <span class="cooldown-sweep"></span>
+          </button>
+          <button class="skill-button" data-skill="ward" type="button" aria-label="铜卫结界">
+            <span class="skill-icon ward-icon"></span>
+            <span class="keycap">F</span>
+            <span class="cooldown-sweep"></span>
+          </button>
+        </div>
+
+        <div class="mouse-hint">
+          <span class="mouse-mark" aria-hidden="true"></span>
+          <p><b>点击地面</b>移动<br /><b>Shift</b>奔跑 · <b>点击敌人</b>攻击</p>
+        </div>
+      </section>
+
+      <section id="relic-drawer" class="relic-drawer hud-layer" aria-label="遗物">
+        <button id="relic-toggle" type="button">
+          <span>遗物匣</span>
+          <small id="relic-count">0 / 3</small>
+        </button>
+        <div id="relic-slots" class="relic-slots">
+          <div class="relic-slot empty"><span>Ⅰ</span><small>空槽</small></div>
+          <div class="relic-slot empty"><span>Ⅱ</span><small>空槽</small></div>
+          <div class="relic-slot empty"><span>Ⅲ</span><small>空槽</small></div>
+        </div>
+      </section>
+
+      <div id="boss-bar" class="boss-bar hud-layer hidden">
+        <div class="boss-copy">
+          <span>深渊守门者</span>
+          <strong id="boss-name">熔铸暴君</strong>
+        </div>
+        <div class="boss-track"><div id="boss-fill"></div></div>
+      </div>
+
+      <section id="ranking-panel" class="ranking-panel" aria-labelledby="ranking-title">
+        <header class="ranking-header">
+          <div>
+            <p class="overline">EMBERFALL ARCHIVES</p>
+            <h2 id="ranking-title">试炼名录</h2>
+          </div>
+          <button id="ranking-close" class="ranking-close" type="button" aria-label="关闭排行榜">×</button>
+        </header>
+
+        <div class="ranking-profile">
+          <div>
+            <span>当前旅者</span>
+            <strong id="ranking-player-name">无名旅者</strong>
+          </div>
+          <span id="ranking-mode" class="ranking-mode">连接中</span>
+        </div>
+
+        <div class="ranking-tabs" role="tablist" aria-label="榜单类型">
+          <button class="ranking-tab active" data-ranking-type="score" role="tab" aria-selected="true" type="button">
+            单局排行榜
+          </button>
+          <button class="ranking-tab" data-ranking-type="points" role="tab" aria-selected="false" type="button">
+            累计积分榜
+          </button>
+        </div>
+
+        <div class="ranking-column-head" aria-hidden="true">
+          <span>名次 / 旅者</span>
+          <span id="ranking-value-label">最高分</span>
+        </div>
+        <ol id="ranking-list" class="ranking-list">
+          <li class="ranking-empty">正在读取试炼记录…</li>
+        </ol>
+
+        <details class="rules-card">
+          <summary>积分规则</summary>
+          <div class="rules-grid">
+            <span>锈牙爬兽 <b>+80</b></span>
+            <span>蚀光幽魂 <b>+100</b></span>
+            <span>铸渣蛮兵 <b>+160</b></span>
+            <span>守门 Boss <b>+1200</b></span>
+            <span>清除浪潮 <b>+300 + 波数×50</b></span>
+            <span>每三波通关 <b>+2000</b></span>
+          </div>
+        </details>
+      </section>
+
+      <section id="start-screen" class="screen-overlay active" aria-labelledby="game-title">
+        <div class="start-atmosphere" aria-hidden="true">
+          <span class="orbit orbit-one"></span>
+          <span class="orbit orbit-two"></span>
+          <span class="core-rune"></span>
+        </div>
+        <div class="start-copy">
+          <p class="overline">THREE.JS ACTION RPG PROTOTYPE</p>
+          <h2 id="game-title"><span>余烬</span><span>深渊</span></h2>
+          <p class="start-lede">
+            地底的铸炉再次苏醒。携带最后一簇灵火，穿过腐化回廊，击碎守门者的核心。
+          </p>
+
+          <label class="player-name-field" for="player-name-input">
+            <span>旅者名</span>
+            <input id="player-name-input" maxlength="12" autocomplete="nickname" spellcheck="false" />
+            <small>用于在线排行榜，可随时修改</small>
+          </label>
+
+          <div class="start-actions">
+            <button id="start-button" class="primary-button" type="button">
+              <span id="start-button-label">进入地窟</span>
+              <i aria-hidden="true">›</i>
+            </button>
+            <button id="new-run-button" class="text-button hidden" type="button">放弃旧进度，重新开始</button>
+            <button id="start-ranking-button" class="text-button" type="button">查看排行榜</button>
+          </div>
+
+          <div class="control-strip">
+            <span><b>WASD + Shift</b> 移动 / 奔跑</span>
+            <span><b>鼠标</b> 瞄准</span>
+            <span><b>Q E F</b> 技能</span>
+            <span><b>ESC</b> 暂停</span>
+          </div>
+        </div>
+        <p class="build-tag">本地原型 · 自动保存</p>
+      </section>
+
+      <section id="pause-screen" class="screen-overlay dialog-overlay" aria-labelledby="pause-title">
+        <div class="dialog-card">
+          <p class="overline">试炼已冻结</p>
+          <h2 id="pause-title">暂停</h2>
+          <p>你的进度已保存在当前设备。</p>
+          <button id="resume-button" class="primary-button" type="button"><span>继续探索</span><i>›</i></button>
+          <button id="restart-button" class="text-button" type="button">重新开始本次试炼</button>
+        </div>
+      </section>
+
+      <section id="death-screen" class="screen-overlay dialog-overlay" aria-labelledby="death-title">
+        <div class="dialog-card death-card">
+          <p class="overline">灵火熄灭</p>
+          <h2 id="death-title">你倒在了第 <span id="death-wave">1</span> 波</h2>
+          <p id="death-summary">击败 0 个敌人 · 收集 0 枚余烬</p>
+          <div class="result-score">
+            <span>本局积分</span>
+            <strong id="death-score">0</strong>
+            <small id="death-submit-status">正在记录成绩…</small>
+          </div>
+          <button id="retry-button" class="primary-button" type="button"><span>再次点燃</span><i>›</i></button>
+        </div>
+      </section>
+
+      <section id="victory-screen" class="screen-overlay dialog-overlay" aria-labelledby="victory-title">
+        <div class="dialog-card victory-card">
+          <p class="overline">核心已碎</p>
+          <h2 id="victory-title">回廊暂时归于寂静</h2>
+          <p id="victory-summary">你完成了本次原型试炼。</p>
+          <div class="result-score">
+            <span>当前积分</span>
+            <strong id="victory-score">0</strong>
+            <small id="victory-submit-status">正在记录成绩…</small>
+          </div>
+          <button id="continue-button" class="primary-button" type="button"><span>继续无尽试炼</span><i>›</i></button>
+          <button id="victory-restart-button" class="text-button" type="button">从第一波重新开始</button>
+        </div>
+      </section>
+    </main>
+
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>
