@@ -2,6 +2,7 @@ import * as THREE from "three";
 import "./style.css";
 import { LeaderboardService } from "./leaderboard.js";
 import { calculateScore, createRunStats, formatScore, normalizeRunStats } from "./scoring.js";
+import { EmberAudio } from "./audio-engine.js";
 import {
   LOCAL_SPAWN_RADIUS,
   PLANET_RADIUS,
@@ -27,6 +28,7 @@ const ui = {
   startButtonLabel: document.querySelector("#start-button-label"),
   newRunButton: document.querySelector("#new-run-button"),
   pauseButton: document.querySelector("#pause-button"),
+  audioButton: document.querySelector("#audio-button"),
   resumeButton: document.querySelector("#resume-button"),
   restartButton: document.querySelector("#restart-button"),
   retryButton: document.querySelector("#retry-button"),
@@ -193,6 +195,7 @@ class EmberfallGame {
     this.victorySeen = false;
     this.lastSaveAt = 0;
     this.cameraShake = 0;
+    this.audio = new EmberAudio();
     this.planetRadius = PLANET_RADIUS;
     this.worldOffset = new THREE.Vector2();
     this.regionStates = new Map();
@@ -258,6 +261,7 @@ class EmberfallGame {
     this.resize();
     this.refreshSaveState();
     this.initializeLeaderboard();
+    this.syncAudioButton();
     this.updateUI();
     this.animate();
   }
@@ -633,6 +637,7 @@ class EmberfallGame {
     });
 
     this.canvas.addEventListener("pointerdown", (event) => {
+      void this.audio.unlock();
       if (event.button !== 0 || this.state !== "running") return;
       this.updatePointerWorld();
       const enemy = this.pickEnemy();
@@ -663,6 +668,7 @@ class EmberfallGame {
       }
 
       this.keys.add(event.code);
+      if (this.state === "running") void this.audio.unlock();
       if (event.repeat || this.state !== "running") return;
       if (event.code === "Space") this.tryAttack();
       if (event.code === "KeyQ") this.castNova();
@@ -674,10 +680,12 @@ class EmberfallGame {
     window.addEventListener("keyup", (event) => this.keys.delete(event.code));
 
     ui.startButton.addEventListener("click", () => {
+      void this.audio.unlock();
       this.syncPlayerName();
       this.startRun(this.hasSave());
     });
     ui.newRunButton.addEventListener("click", () => {
+      void this.audio.unlock();
       this.syncPlayerName();
       void this.submitCurrentScore();
       this.startRun(false);
@@ -691,10 +699,15 @@ class EmberfallGame {
     ui.retryButton.addEventListener("click", () => this.startRun(false));
     ui.continueButton.addEventListener("click", () => this.continueAfterVictory());
     ui.victoryRestartButton.addEventListener("click", () => {
+      void this.audio.unlock();
       void this.submitCurrentScore();
       this.startRun(false);
     });
     ui.potionButton.addEventListener("click", () => this.usePotion());
+    ui.audioButton.addEventListener("click", () => {
+      this.audio.toggle();
+      this.syncAudioButton();
+    });
     ui.relicToggle.addEventListener("click", () => ui.relicDrawer.classList.toggle("collapsed"));
     ui.playerNameInput.addEventListener("change", () => this.syncPlayerName());
     ui.rankingButton.addEventListener("click", () => this.openRanking());
@@ -720,6 +733,14 @@ class EmberfallGame {
     ui.playerNameInput.value = profile.name;
     ui.rankingPlayerName.textContent = profile.name;
     ui.rankingMode.textContent = this.leaderboard.mode === "online" ? "全服榜" : "本地榜";
+  }
+
+  syncAudioButton() {
+    const enabled = this.audio.isEnabled();
+    ui.audioButton.classList.toggle("muted", !enabled);
+    ui.audioButton.setAttribute("aria-pressed", String(enabled));
+    ui.audioButton.setAttribute("aria-label", enabled ? "关闭声音" : "开启声音");
+    ui.audioButton.title = enabled ? "关闭音乐与音效" : "开启音乐与音效";
   }
 
   syncPlayerName() {
@@ -1660,6 +1681,7 @@ class EmberfallGame {
 
     const started = this.beginPlayerAction("attack", 0.38, () => this.fireProjectile(target), 0.46, true);
     if (!started) return;
+    this.audio.play("attackCast");
     this.skillState.attack.cooldown = this.skillState.attack.max;
     this.player.aimDirection.copy(target.group.position).sub(this.player.group.position).setY(0).normalize();
   }
@@ -1667,6 +1689,7 @@ class EmberfallGame {
   fireProjectile(target) {
     if (!target || target.dead) target = this.findNearestEnemy(13);
     if (!target) return;
+    this.audio.play("attackRelease");
     this.player.rig.staffGem.updateWorldMatrix(true, false);
     const start = this.player.rig.staffGem.getWorldPosition(new THREE.Vector3());
     const projectileGroup = new THREE.Group();
@@ -1728,12 +1751,14 @@ class EmberfallGame {
     if (this.state !== "running" || skill.cooldown > 0 || this.player.action) return;
     const started = this.beginPlayerAction("nova", 0.86, () => this.releaseNova(), 0.7, true);
     if (!started) return;
+    this.audio.play("novaCast");
     skill.cooldown = skill.max;
     this.spawnCastingEffect(0xff7838, 0.86, "nova");
     this.addFeed("<b>余烬震环</b> · 正在吟唱");
   }
 
   releaseNova() {
+    this.audio.play("novaRelease", 1.12);
     const center = this.player.group.position.clone();
     const damage = Math.round(this.player.skillPower * 1.65 + this.player.damage * 0.35);
     this.spawnRing(center, 5.2, 0xe76f34, 0.55);
@@ -1755,6 +1780,7 @@ class EmberfallGame {
     if (this.state !== "running" || skill.cooldown > 0 || this.player.action) return;
     const started = this.beginPlayerAction("dash", 0.34, null, 0.2, true);
     if (!started) return;
+    this.audio.play("dash");
     skill.cooldown = skill.max;
     const start = this.player.group.position.clone();
     let direction = this.pointerWorld.clone().sub(start).setY(0);
@@ -1777,12 +1803,14 @@ class EmberfallGame {
     if (this.state !== "running" || skill.cooldown > 0 || this.player.action) return;
     const started = this.beginPlayerAction("ward", 0.74, () => this.releaseWard(), 0.66, true);
     if (!started) return;
+    this.audio.play("wardCast");
     skill.cooldown = skill.max;
     this.spawnCastingEffect(0x74d5ce, 0.74, "ward");
     this.addFeed("<b>铜卫结界</b> · 正在构筑");
   }
 
   releaseWard() {
+    this.audio.play("wardRelease");
     this.player.shield = Math.round(this.player.maxHp * 0.38);
     const shieldGroup = new THREE.Group();
     const shield = mesh(
@@ -1846,6 +1874,7 @@ class EmberfallGame {
     this.player.potions -= 1;
     const healed = Math.min(Math.round(this.player.maxHp * 0.45), this.player.maxHp - this.player.hp);
     this.player.hp += healed;
+    this.audio.play("potion");
     this.spawnRing(this.player.group.position.clone(), 1.8, 0x7bd6b6, 0.45);
     this.spawnDamageNumber(this.player.group.position, `+${healed}`, "#8ee1ba");
     this.updateUI();
@@ -1869,6 +1898,7 @@ class EmberfallGame {
   fireEnemyProjectile(enemy) {
     if (!enemy || enemy.dead) return;
     const magic = enemy.damageType === "magic";
+    this.audio.play(magic ? "enemyMagicShot" : "enemyPhysicalShot", 0.7);
     const color = magic ? 0xa87cff : 0xd9b36f;
     const group = new THREE.Group();
     group.position.copy(enemy.group.position).add(
@@ -2168,6 +2198,10 @@ class EmberfallGame {
         ? "<b>虚空风暴</b> · 全屏魔法伤害，冲刺或结界可抵挡"
         : "<b>熔炉震击</b> · 大范围物理伤害，立即离开红圈",
     );
+    this.audio.play(
+      isMagicStorm ? "bossMagicWarning" : "bossPhysicalWarning",
+      1.15,
+    );
   }
 
   updateBossTelegraph(enemy, dt) {
@@ -2210,6 +2244,12 @@ class EmberfallGame {
         this.cameraShake,
         enemy.telegraph.damageType === "magic" ? 0.42 : 0.34,
       );
+      this.audio.play(
+        enemy.telegraph.damageType === "magic"
+          ? "bossMagicImpact"
+          : "bossPhysicalImpact",
+        1.2,
+      );
       this.scene.remove(enemy.telegraph.ring);
       this.scene.remove(enemy.telegraph.disc);
       enemy.telegraph = null;
@@ -2226,6 +2266,7 @@ class EmberfallGame {
       Math.round(amount * variance * mitigation * (critical ? 1.15 : 1)),
     );
     enemy.hp -= dealt;
+    this.audio.play(damageType === "magic" ? "magicHit" : "attackHit", critical ? 1.25 : 1);
     enemy.flash = 0.09;
     this.spawnDamageNumber(
       enemy.group.position.clone().add(new THREE.Vector3(0, enemy.type === "boss" ? 3.4 : 2.2, 0)),
@@ -2245,6 +2286,7 @@ class EmberfallGame {
 
   killEnemy(enemy) {
     enemy.dead = true;
+    this.audio.play("enemyDeath", enemy.type === "boss" ? 1.8 : 0.9);
     const region = this.regionStates.get(enemy.regionKey);
     if (region) region.defeated += 1;
     if (enemy.regionKey === this.currentRegionKey) {
@@ -2327,6 +2369,10 @@ class EmberfallGame {
       remaining -= absorbed;
     }
     this.player.hp -= remaining;
+    this.audio.play(
+      damageType === "magic" ? "playerMagicHit" : "playerPhysicalHit",
+      source?.type === "boss" ? 1.35 : 0.9,
+    );
     this.player.invulnerable = 0.38;
     this.cameraShake = Math.max(this.cameraShake, source?.type === "boss" ? 0.24 : 0.1);
     this.spawnDamageNumber(
@@ -2415,6 +2461,7 @@ class EmberfallGame {
   }
 
   collectDrop(drop) {
+    this.audio.play("pickup", drop.type === "gear" ? 1.25 : 0.75);
     if (drop.type === "xp") this.addXP(drop.value);
     if (drop.type === "shard") {
       this.player.shards += drop.value;
@@ -2442,6 +2489,7 @@ class EmberfallGame {
       this.player.skillPower += 4;
       this.player.armor += 1;
       if (this.player.level % 2 === 0) this.player.magicResist += 1;
+      this.audio.play("levelUp", 1.3);
       this.spawnRing(this.player.group.position.clone(), 3.2, 0xffad65, 0.7);
       this.spawnBurst(this.player.group.position.clone().add(new THREE.Vector3(0, 1, 0)), 18, 0xffb36b, 6);
       this.addFeed(`<b>灵火升阶</b> · 当前等级 ${this.player.level}`);
@@ -2537,6 +2585,10 @@ class EmberfallGame {
     this.player.gearScore += Math.round(basePower * rarity.multiplier * 8);
     this.player.relics.unshift(item);
     this.player.relics = this.player.relics.slice(0, 6);
+    this.audio.play(
+      "gear",
+      rarity.id === "legendary" ? 1.8 : rarity.id === "epic" ? 1.35 : 1,
+    );
     this.spawnEnergyColumn(
       this.player.group.position.clone(),
       Number.parseInt(rarity.color.slice(1), 16),
@@ -2943,6 +2995,7 @@ class EmberfallGame {
     this.addFeed(
       `<b>${region.biome.name} 已净化</b> · ${respawnSeconds} 秒后随机重生，继续前往相邻区域`,
     );
+    this.audio.play("regionClear", 1.2);
     this.syncRegionObjective(region);
     this.updateUI();
     this.saveGame();
