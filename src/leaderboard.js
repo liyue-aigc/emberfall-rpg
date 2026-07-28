@@ -2,7 +2,7 @@ import { calculateScore, normalizeRunStats } from "./scoring.js";
 
 const PROFILE_KEY = "emberfall-player-profile-v1";
 const LOCAL_BOARD_KEY = "emberfall-local-leaderboard-v1";
-const API_URL = (import.meta.env?.VITE_LEADERBOARD_API_URL || "").replace(/\/$/, "");
+const API_URL = (import.meta.env.VITE_LEADERBOARD_API_URL || "").replace(/\/$/, "");
 
 export class LeaderboardService {
   constructor() {

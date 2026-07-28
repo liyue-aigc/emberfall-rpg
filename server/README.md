@@ -1,6 +1,6 @@
 # Emberfall Leaderboard API
 
-Vercel Function + Upstash Redis 实现的全服排行榜后端。
+Vercel Function + Neon Postgres 实现的全服排行榜后端。
 
 ## 接口
 
@@ -12,8 +12,10 @@ Vercel Function + Upstash Redis 实现的全服排行榜后端。
 
 ## 环境变量
 
-支持 Vercel Marketplace Upstash Redis 注入的任一组变量：
+使用 Vercel Marketplace Neon 注入的数据库连接变量：
 
-- `UPSTASH_REDIS_REST_URL` / `UPSTASH_REDIS_REST_TOKEN`
-- `KV_REST_API_URL` / `KV_REST_API_TOKEN`
-- `REDIS_REST_URL` / `REDIS_REST_TOKEN`
+- `DATABASE_URL`（推荐）
+- `POSTGRES_URL`
+- `DATABASE_URL_UNPOOLED`
+
+首次请求会自动创建独立的玩家、对局去重和限流数据表。

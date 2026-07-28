@@ -4,6 +4,6 @@
   "private": true,
   "type": "module",
   "dependencies": {
-    "@upstash/redis": "^1.35.7"
+    "@neondatabase/serverless": "^1.1.0"
   }
 }
