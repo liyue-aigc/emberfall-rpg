@@ -2,6 +2,7 @@ export const SCORE_RULES = Object.freeze({
   kills: Object.freeze({
     crawler: 80,
     wisp: 100,
+    ranger: 130,
     brute: 160,
     boss: 1200,
   }),
@@ -16,6 +17,7 @@ export function createRunStats() {
     kills: {
       crawler: 0,
       wisp: 0,
+      ranger: 0,
       brute: 0,
       boss: 0,
     },
@@ -31,6 +33,7 @@ export function normalizeRunStats(stats = {}) {
     kills: {
       crawler: nonNegativeInteger(kills.crawler),
       wisp: nonNegativeInteger(kills.wisp),
+      ranger: nonNegativeInteger(kills.ranger),
       brute: nonNegativeInteger(kills.brute),
       boss: nonNegativeInteger(kills.boss),
     },

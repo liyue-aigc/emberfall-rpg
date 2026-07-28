@@ -5,6 +5,7 @@ const RULES = {
   kills: {
     crawler: 80,
     wisp: 100,
+    ranger: 130,
     brute: 160,
     boss: 1200,
   },
@@ -271,6 +272,7 @@ function validatePayload(body) {
     kills: {
       crawler: clampInteger(kills.crawler, 0, 25000, 0),
       wisp: clampInteger(kills.wisp, 0, 25000, 0),
+      ranger: clampInteger(kills.ranger, 0, 25000, 0),
       brute: clampInteger(kills.brute, 0, 25000, 0),
       boss: clampInteger(kills.boss, 0, 1000, 0),
     },

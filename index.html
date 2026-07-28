@@ -30,7 +30,7 @@
 
         <div class="run-state">
           <span id="zone-label">下层回廊</span>
-          <strong id="wave-label">浪潮 1</strong>
+          <strong id="wave-label">威胁 1</strong>
         </div>
 
         <div class="top-actions">
@@ -54,7 +54,7 @@
           <div class="meter health-meter">
             <div class="meter-copy">
               <span>生命</span>
-              <strong id="health-label">100 / 100</strong>
+              <strong id="health-label">130 / 130</strong>
             </div>
             <div class="meter-track">
               <div id="health-fill" class="meter-fill"></div>
@@ -85,10 +85,16 @@
           <div id="objective-fill"></div>
         </div>
         <div class="stat-line">
-          <span>伤害 <b id="damage-stat">18</b></span>
-          <span>护甲 <b id="armor-stat">4</b></span>
+          <span>攻击 <b id="damage-stat">20</b></span>
+          <span>护甲 <b id="armor-stat">5</b></span>
           <span>余烬 <b id="shard-stat">0</b></span>
         </div>
+        <div class="stat-line secondary">
+          <span>术强 <b id="skill-stat">26</b></span>
+          <span>魔抗 <b id="resist-stat">5</b></span>
+          <span>威胁 <b id="threat-stat">1</b></span>
+        </div>
+        <div id="region-status" class="region-status">球面坐标 0 · 0</div>
         <div class="score-line">
           <span>本局积分</span>
           <strong id="current-score">0</strong>
@@ -140,13 +146,16 @@
 
       <section id="relic-drawer" class="relic-drawer hud-layer" aria-label="遗物">
         <button id="relic-toggle" type="button">
-          <span>遗物匣</span>
-          <small id="relic-count">0 / 3</small>
+          <span>战利品匣</span>
+          <small id="relic-count">战力 0</small>
         </button>
         <div id="relic-slots" class="relic-slots">
-          <div class="relic-slot empty"><span>Ⅰ</span><small>空槽</small></div>
-          <div class="relic-slot empty"><span>Ⅱ</span><small>空槽</small></div>
-          <div class="relic-slot empty"><span>Ⅲ</span><small>空槽</small></div>
+          <div class="relic-slot empty"><span>Ⅰ</span><small>等待掉落</small></div>
+          <div class="relic-slot empty"><span>Ⅱ</span><small>等待掉落</small></div>
+          <div class="relic-slot empty"><span>Ⅲ</span><small>等待掉落</small></div>
+          <div class="relic-slot empty"><span>Ⅳ</span><small>等待掉落</small></div>
+          <div class="relic-slot empty"><span>Ⅴ</span><small>等待掉落</small></div>
+          <div class="relic-slot empty"><span>Ⅵ</span><small>等待掉落</small></div>
         </div>
       </section>
 
@@ -197,10 +206,11 @@
           <div class="rules-grid">
             <span>锈牙爬兽 <b>+80</b></span>
             <span>蚀光幽魂 <b>+100</b></span>
+            <span>腐弦猎手 <b>+130</b></span>
             <span>铸渣蛮兵 <b>+160</b></span>
             <span>守门 Boss <b>+1200</b></span>
-            <span>清除浪潮 <b>+300 + 波数×50</b></span>
-            <span>每三波通关 <b>+2000</b></span>
+            <span>净化区域 <b>+300 + 次数×50</b></span>
+            <span>每三次净化 <b>+2000</b></span>
           </div>
         </details>
       </section>
@@ -215,7 +225,7 @@
           <p class="overline">THREE.JS ACTION RPG PROTOTYPE</p>
           <h2 id="game-title"><span>余烬</span><span>深渊</span></h2>
           <p class="start-lede">
-            地底的铸炉再次苏醒。携带最后一簇灵火，穿过腐化回廊，击碎守门者的核心。
+            铸炉星是一颗被腐化覆盖的球形世界。沿局部地平线持续探索，在不断成长的敌群中夺取战利品。
           </p>
 
           <label class="player-name-field" for="player-name-input">
@@ -256,7 +266,7 @@
       <section id="death-screen" class="screen-overlay dialog-overlay" aria-labelledby="death-title">
         <div class="dialog-card death-card">
           <p class="overline">灵火熄灭</p>
-          <h2 id="death-title">你倒在了第 <span id="death-wave">1</span> 波</h2>
+          <h2 id="death-title">你倒在威胁 <span id="death-wave">1</span> 区域</h2>
           <p id="death-summary">击败 0 个敌人 · 收集 0 枚余烬</p>
           <div class="result-score">
             <span>本局积分</span>
