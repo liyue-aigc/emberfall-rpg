@@ -97,6 +97,10 @@
           <span>魔抗 <b id="resist-stat">5</b></span>
           <span>威胁 <b id="threat-stat">1</b></span>
         </div>
+        <div id="region-event" class="region-event">
+          <span>区域异象</span>
+          <strong>尚未侦测</strong>
+        </div>
         <div id="region-status" class="region-status">球面坐标 0 · 0</div>
         <div class="score-line">
           <span>本局积分</span>
@@ -169,6 +173,14 @@
         </div>
         <div class="boss-track"><div id="boss-fill"></div></div>
       </div>
+
+      <button id="interact-prompt" class="interact-prompt hud-layer hidden" type="button">
+        <span class="interact-key">G</span>
+        <span>
+          <small>高风险交互</small>
+          <strong>开启诅咒宝箱</strong>
+        </span>
+      </button>
 
       <section id="ranking-panel" class="ranking-panel" aria-labelledby="ranking-title">
         <header class="ranking-header">
@@ -263,6 +275,16 @@
           <p>你的进度已保存在当前设备。</p>
           <button id="resume-button" class="primary-button" type="button"><span>继续探索</span><i>›</i></button>
           <button id="restart-button" class="text-button" type="button">重新开始本次试炼</button>
+        </div>
+      </section>
+
+      <section id="rune-screen" class="screen-overlay dialog-overlay rune-overlay" aria-labelledby="rune-title">
+        <div class="rune-dialog">
+          <p class="overline">EMBER SIGIL AWAKENING</p>
+          <h2 id="rune-title">灵火择印</h2>
+          <p>选择一枚符文改变技能形态。相同符文可以叠加至三级。</p>
+          <div id="rune-choices" class="rune-choices"></div>
+          <small id="rune-progress" class="rune-progress">当前已激活 0 枚符文</small>
         </div>
       </section>
 

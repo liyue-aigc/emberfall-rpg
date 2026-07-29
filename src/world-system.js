@@ -75,6 +75,9 @@ export function createRegionState(x, z, regionsCleared = 0, playerLevel = 1) {
     clears: 0,
     respawnAt: 0,
     hasBoss: false,
+    event: null,
+    eventCycle: -1,
+    eventTimeLeft: 0,
   };
 }
 

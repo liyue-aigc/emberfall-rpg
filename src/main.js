@@ -18,6 +18,126 @@ import {
 const SAVE_KEY = "emberfall-save-v1";
 const MINIMAP_RANGE = 34;
 
+const RUNE_LIBRARY = Object.freeze([
+  {
+    id: "attack_chain",
+    skill: "火矢",
+    glyph: "⌁",
+    name: "连锁余火",
+    maxRank: 3,
+    description: (rank) => `命中后跳跃至附近 ${rank} 个目标，造成 ${30 + rank * 10}% 伤害。`,
+  },
+  {
+    id: "attack_burst",
+    skill: "火矢",
+    glyph: "✹",
+    name: "破片火种",
+    maxRank: 3,
+    description: (rank) => `命中产生 ${1.25 + rank * 0.25} 米爆炸，造成 ${20 + rank * 8}% 范围伤害。`,
+  },
+  {
+    id: "attack_haste",
+    skill: "火矢",
+    glyph: "»",
+    name: "炽热连发",
+    maxRank: 3,
+    description: (rank) => `火矢攻击间隔缩短 ${rank * 12}%。`,
+  },
+  {
+    id: "nova_echo",
+    skill: "震环",
+    glyph: "◎",
+    name: "余震回响",
+    maxRank: 3,
+    description: (rank) => `震环后追加一次 ${36 + rank * 12}% 威力的回响。`,
+  },
+  {
+    id: "nova_vortex",
+    skill: "震环",
+    glyph: "◉",
+    name: "熔心引力",
+    maxRank: 3,
+    description: (rank) => `吟唱完成时将 ${7 + rank} 米内敌人拉向震环中心。`,
+  },
+  {
+    id: "nova_overload",
+    skill: "震环",
+    glyph: "✺",
+    name: "过载震波",
+    maxRank: 3,
+    description: (rank) => `震环伤害提高 ${rank * 18}%，半径扩大 ${(rank * 0.45).toFixed(2)} 米。`,
+  },
+  {
+    id: "dash_blast",
+    skill: "裂隙步",
+    glyph: "◇",
+    name: "裂隙爆点",
+    maxRank: 3,
+    description: (rank) => `落点爆炸，对附近敌人造成 ${55 + rank * 20}% 术强伤害。`,
+  },
+  {
+    id: "dash_phase",
+    skill: "裂隙步",
+    glyph: "↯",
+    name: "相位折返",
+    maxRank: 3,
+    description: (rank) => `裂隙步冷却缩短 ${(rank * 0.55).toFixed(2)} 秒。`,
+  },
+  {
+    id: "dash_guard",
+    skill: "裂隙步",
+    glyph: "⬡",
+    name: "迁跃护壳",
+    maxRank: 3,
+    description: (rank) => `落地获得最大生命 ${rank * 7}% 的护盾。`,
+  },
+  {
+    id: "ward_heal",
+    skill: "结界",
+    glyph: "✦",
+    name: "复苏铜纹",
+    maxRank: 3,
+    description: (rank) => `结界完成时恢复最大生命 ${rank * 7}%。`,
+  },
+  {
+    id: "ward_thorns",
+    skill: "结界",
+    glyph: "♢",
+    name: "反噬棘面",
+    maxRank: 3,
+    description: (rank) => `护盾吸收伤害时，向攻击者反射 ${35 + rank * 15}% 术强伤害。`,
+  },
+  {
+    id: "ward_pulse",
+    skill: "结界",
+    glyph: "◌",
+    name: "守御脉冲",
+    maxRank: 3,
+    description: (rank) => `结界展开时对 4 米内敌人造成 ${45 + rank * 20}% 术强伤害。`,
+  },
+]);
+
+const REGION_EVENTS = Object.freeze({
+  elite: Object.freeze({
+    id: "elite",
+    name: "精英悬赏",
+    description: "一名强化精英统领族群，击杀后必得高阶战利品",
+    color: "#ffbd72",
+  }),
+  rush: Object.freeze({
+    id: "rush",
+    name: "限时猎杀",
+    description: "45 秒内完成净化可获得额外装备与余烬",
+    color: "#6fdbc7",
+  }),
+  volatile: Object.freeze({
+    id: "volatile",
+    name: "爆裂感染",
+    description: "腐化物死亡时爆炸，净化奖励大幅提升",
+    color: "#e782ff",
+  }),
+});
+
 const ui = {
   shell: document.querySelector("#game-shell"),
   startScreen: document.querySelector("#start-screen"),
@@ -52,6 +172,7 @@ const ui = {
   armorStat: document.querySelector("#armor-stat"),
   resistStat: document.querySelector("#resist-stat"),
   threatStat: document.querySelector("#threat-stat"),
+  regionEvent: document.querySelector("#region-event"),
   regionStatus: document.querySelector("#region-status"),
   shardStat: document.querySelector("#shard-stat"),
   currentScore: document.querySelector("#current-score"),
@@ -64,6 +185,10 @@ const ui = {
   bossBar: document.querySelector("#boss-bar"),
   bossName: document.querySelector("#boss-name"),
   bossFill: document.querySelector("#boss-fill"),
+  interactPrompt: document.querySelector("#interact-prompt"),
+  runeScreen: document.querySelector("#rune-screen"),
+  runeChoices: document.querySelector("#rune-choices"),
+  runeProgress: document.querySelector("#rune-progress"),
   deathWave: document.querySelector("#death-wave"),
   deathSummary: document.querySelector("#death-summary"),
   victorySummary: document.querySelector("#victory-summary"),
@@ -213,6 +338,11 @@ class EmberfallGame {
     this.drops = [];
     this.effects = [];
     this.damageNumbers = [];
+    this.delayedActions = [];
+    this.runeRanks = {};
+    this.pendingRuneDrafts = 0;
+    this.cursedChest = null;
+    this.cursedChallenge = null;
 
     this.skillState = {
       attack: { cooldown: 0, max: 0.42 },
@@ -653,7 +783,7 @@ class EmberfallGame {
     });
 
     window.addEventListener("keydown", (event) => {
-      if (["KeyW", "KeyA", "KeyS", "KeyD", "Space", "KeyQ", "KeyE", "KeyF", "KeyR", "Escape"].includes(event.code)) {
+      if (["KeyW", "KeyA", "KeyS", "KeyD", "Space", "KeyQ", "KeyE", "KeyF", "KeyG", "KeyR", "Escape"].includes(event.code)) {
         event.preventDefault();
       }
 
@@ -674,6 +804,7 @@ class EmberfallGame {
       if (event.code === "KeyQ") this.castNova();
       if (event.code === "KeyE") this.castDash();
       if (event.code === "KeyF") this.castWard();
+      if (event.code === "KeyG") this.interactWithChest();
       if (event.code === "KeyR") this.usePotion();
     });
 
@@ -704,6 +835,7 @@ class EmberfallGame {
       this.startRun(false);
     });
     ui.potionButton.addEventListener("click", () => this.usePotion());
+    ui.interactPrompt.addEventListener("click", () => this.interactWithChest());
     ui.audioButton.addEventListener("click", () => {
       this.audio.toggle();
       this.syncAudioButton();
@@ -881,6 +1013,9 @@ class EmberfallGame {
     this.regionStates.clear();
     this.currentRegionKey = null;
     this.regionsCleared = 0;
+    this.runeRanks = {};
+    this.pendingRuneDrafts = 0;
+    this.cursedChallenge = null;
 
     if (fromSave) this.loadSave();
 
@@ -903,8 +1038,10 @@ class EmberfallGame {
     ui.pauseScreen.classList.remove("active");
     ui.deathScreen.classList.remove("active");
     ui.victoryScreen.classList.remove("active");
+    ui.runeScreen.classList.remove("active");
     this.updateCurrentRegion(true);
     this.updateUI();
+    if (this.pendingRuneDrafts > 0) this.openNextRuneDraft();
   }
 
   resetPlayerStats() {
@@ -931,6 +1068,8 @@ class EmberfallGame {
       running: false,
       action: null,
     });
+    this.runeRanks = {};
+    this.pendingRuneDrafts = 0;
   }
 
   clearRuntimeObjects() {
@@ -948,12 +1087,17 @@ class EmberfallGame {
     this.effects.forEach((effect) => {
       if (effect.object) this.scene.remove(effect.object);
     });
+    if (this.cursedChest?.group) this.scene.remove(this.cursedChest.group);
     this.enemies = [];
     this.projectiles = [];
     this.drops = [];
     this.effects = [];
+    this.delayedActions = [];
+    this.cursedChest = null;
+    this.cursedChallenge = null;
     this.floatLayer.replaceChildren();
     ui.bossBar.classList.add("hidden");
+    ui.interactPrompt.classList.add("hidden");
   }
 
   spawnWave() {
@@ -967,6 +1111,64 @@ class EmberfallGame {
     if ((region?.threat ?? 1) < 2 && biased === "brute" && roll < 0.68) return "crawler";
     if (roll > 0.82 && (region?.threat ?? 1) >= 2) return "brute";
     return biased;
+  }
+
+  assignRegionEvent(region) {
+    if (region.eventCycle === region.clears) return;
+    region.eventCycle = region.clears;
+    region.eventTimeLeft = 0;
+    const roll = Math.random();
+    region.event =
+      roll < 0.26
+        ? null
+        : roll < 0.51
+          ? REGION_EVENTS.elite
+          : roll < 0.76
+            ? REGION_EVENTS.rush
+            : REGION_EVENTS.volatile;
+  }
+
+  applyRegionEventToEnemy(enemy, region, makeElite = false) {
+    if (!enemy || !region.event) return;
+    if (region.event.id === "rush") {
+      enemy.speed *= 1.18;
+      enemy.damage = Math.round(enemy.damage * 1.08);
+    }
+    if (region.event.id === "volatile") {
+      enemy.volatile = true;
+      enemy.xp = Math.round(enemy.xp * 1.2);
+    }
+    if (region.event.id === "elite" && makeElite) {
+      enemy.elite = true;
+      enemy.name = `悬赏 · ${enemy.name}`;
+      enemy.maxHp = Math.round(enemy.maxHp * 2.35);
+      enemy.hp = enemy.maxHp;
+      enemy.damage = Math.round(enemy.damage * 1.5);
+      enemy.speed *= 1.08;
+      enemy.xp = Math.round(enemy.xp * 2.4);
+      enemy.group.scale.multiplyScalar(1.18);
+      enemy.materials.forEach((material) => {
+        material.emissive.setHex(0x6f2c08);
+        material.emissiveIntensity = Math.max(material.emissiveIntensity, 0.65);
+      });
+    }
+  }
+
+  syncRegionEvent(region) {
+    if (!region?.event) {
+      ui.regionEvent.classList.remove("active");
+      ui.regionEvent.style.removeProperty("--event-color");
+      ui.regionEvent.innerHTML = "<span>区域异象</span><strong>无异常规则</strong>";
+      return;
+    }
+    let suffix = "";
+    if (region.event.id === "rush" && region.active) {
+      const seconds = Math.max(0, Math.ceil(region.eventTimeLeft));
+      suffix = ` · ${seconds}s`;
+    }
+    ui.regionEvent.classList.add("active");
+    ui.regionEvent.style.setProperty("--event-color", region.event.color);
+    ui.regionEvent.innerHTML = `<span>${region.event.name}${suffix}</span><strong>${region.event.description}</strong>`;
   }
 
   updateCurrentRegion(force = false) {
@@ -1021,6 +1223,7 @@ class EmberfallGame {
   }
 
   spawnRegionPack(region) {
+    this.assignRegionEvent(region);
     region.active = true;
     region.defeated = 0;
     region.threat = getRegionThreat(
@@ -1031,14 +1234,18 @@ class EmberfallGame {
     );
     const bossCycle = Math.abs(region.x * 5 + region.z * 7 + region.clears + this.regionsCleared);
     region.hasBoss = region.threat >= 2 && bossCycle % 2 === 1;
-    const count = Math.min(12, 5 + Math.floor(region.threat * 0.7) + (region.hasBoss ? 1 : 0));
+    const eventBonus =
+      region.event?.id === "rush" ? 2 : region.event?.id === "volatile" ? 1 : region.event?.id === "elite" ? 1 : 0;
+    const count = Math.min(14, 5 + Math.floor(region.threat * 0.7) + (region.hasBoss ? 1 : 0) + eventBonus);
     region.enemyCount = count;
+    if (region.event?.id === "rush") region.eventTimeLeft = 45;
     this.waveActive = true;
     this.waveDefeated = 0;
     this.waveTotal = count;
     this.wave = region.threat;
 
     let rangedSpawned = 0;
+    let eliteApplied = false;
     const rangedLimit = Math.min(
       count - 1,
       2 + Math.floor(Math.max(0, region.threat - 1) * 0.65),
@@ -1058,25 +1265,35 @@ class EmberfallGame {
         .clone()
         .add(new THREE.Vector3(Math.cos(angle) * radius, 0, Math.sin(angle) * radius));
       position.y = this.surfaceHeight(position.x, position.z);
-      this.spawnEnemy(type, position, {
+      const enemy = this.spawnEnemy(type, position, {
         regionKey: region.key,
         threat: region.threat,
         biome: region.biome,
       });
+      const makeElite =
+        region.event?.id === "elite" && !eliteApplied && type !== "boss";
+      this.applyRegionEventToEnemy(enemy, region, makeElite);
+      eliteApplied ||= makeElite;
     }
 
     ui.bossBar.classList.toggle("hidden", !region.hasBoss);
     this.addFeed(
-      region.hasBoss
+      region.event
+        ? `<b>${region.event.name}</b> · ${region.event.description}`
+        : region.hasBoss
         ? "<b>区域霸主苏醒</b> · 红色为物理冲击，紫色为魔法风暴"
         : `<b>${region.biome.name}</b> · 腐化族群重新出现`,
     );
+    if (region.hasBoss && region.event) {
+      this.addFeed("<b>区域霸主苏醒</b> · 红色为物理冲击，紫色为魔法风暴");
+    }
     this.syncRegionObjective(region);
     this.updateUI();
   }
 
   syncRegionObjective(region) {
     if (!region) return;
+    this.syncRegionEvent(region);
     if (region.active) {
       const remaining = Math.max(0, region.enemyCount - region.defeated);
       ui.objectiveText.textContent = `区域敌人 ${remaining} · 刷新随机`;
@@ -1119,6 +1336,212 @@ class EmberfallGame {
         region.respawnAt = 0;
       }
     });
+  }
+
+  createCursedChestModel() {
+    const group = new THREE.Group();
+    const darkMetal = makeMaterial(0x1e1829, {
+      roughness: 0.42,
+      metalness: 0.72,
+      emissive: 0x220638,
+      emissiveIntensity: 0.55,
+    });
+    const runeMetal = makeMaterial(0x7d4a95, {
+      roughness: 0.28,
+      metalness: 0.65,
+      emissive: 0x8d2bd2,
+      emissiveIntensity: 2.2,
+    });
+    const base = mesh(new THREE.BoxGeometry(1.45, 0.68, 1.02), darkMetal);
+    base.position.y = 0.38;
+    group.add(base);
+    const band = mesh(new THREE.BoxGeometry(1.52, 0.16, 1.08), runeMetal);
+    band.position.y = 0.48;
+    group.add(band);
+
+    const lidPivot = new THREE.Group();
+    lidPivot.position.set(0, 0.72, -0.46);
+    const lid = mesh(new THREE.BoxGeometry(1.48, 0.34, 1.04), darkMetal);
+    lid.position.set(0, 0.12, 0.46);
+    lidPivot.add(lid);
+    const lidBand = mesh(new THREE.BoxGeometry(0.22, 0.39, 1.1), runeMetal);
+    lidBand.position.set(0, 0.13, 0.46);
+    lidPivot.add(lidBand);
+    group.add(lidPivot);
+
+    const core = mesh(
+      new THREE.OctahedronGeometry(0.2, 0),
+      makeMaterial(0xd78aff, {
+        emissive: 0xad35ff,
+        emissiveIntensity: 4.2,
+        roughness: 0.12,
+      }),
+      false,
+    );
+    core.position.set(0, 1.12, 0.08);
+    group.add(core);
+    return { group, lidPivot, core };
+  }
+
+  spawnCursedChest(region) {
+    if (this.cursedChallenge || this.cursedChest?.status === "sealed") return;
+    if (this.cursedChest?.group) this.scene.remove(this.cursedChest.group);
+    const model = this.createCursedChestModel();
+    const angle = rand(0, Math.PI * 2);
+    const position = this.player.group.position
+      .clone()
+      .add(new THREE.Vector3(Math.cos(angle) * 2.5, 0, Math.sin(angle) * 2.5));
+    const baseY = this.surfaceHeight(position.x, position.z, 0.04);
+    model.group.position.set(position.x, baseY, position.z);
+    model.group.rotation.y = rand(-0.4, 0.4);
+    this.scene.add(model.group);
+    this.cursedChest = {
+      ...model,
+      status: "sealed",
+      regionKey: region.key,
+      threat: region.threat,
+      baseY,
+      life: Infinity,
+    };
+    this.spawnEnergyColumn(model.group.position.clone(), 0xa03cdc, 0.45, 3.2);
+    this.addFeed("<b>诅咒宝箱出现</b> · 靠近后按 G 开启高风险挑战");
+  }
+
+  interactWithChest() {
+    const chest = this.cursedChest;
+    if (
+      this.state !== "running" ||
+      !chest ||
+      chest.status !== "sealed" ||
+      distanceXZ(chest.group.position, this.player.group.position) > 2.8
+    ) {
+      return;
+    }
+    this.startCursedChallenge(chest);
+  }
+
+  startCursedChallenge(chest) {
+    chest.status = "active";
+    chest.lidPivot.rotation.x = -0.78;
+    const required = Math.min(8, 4 + Math.floor(chest.threat * 0.75));
+    this.cursedChallenge = {
+      chest,
+      kills: 0,
+      required,
+      timer: 30,
+      maxTimer: 30,
+    };
+    const region = this.regionStates.get(chest.regionKey);
+    if (region) region.respawnAt = Math.max(region.respawnAt, Date.now() + 70_000);
+    this.audio.play("bossMagicWarning", 1.18);
+    this.spawnRing(chest.group.position.clone(), 6.8, 0xa548d2, 0.7);
+    this.spawnEnergyColumn(chest.group.position.clone(), 0xa548d2, 0.68, 6.4);
+    for (let i = 0; i < required; i += 1) {
+      const angle = (i / required) * Math.PI * 2 + rand(-0.24, 0.24);
+      const radius = rand(7.5, 11);
+      const position = chest.group.position
+        .clone()
+        .add(new THREE.Vector3(Math.cos(angle) * radius, 0, Math.sin(angle) * radius));
+      position.y = this.surfaceHeight(position.x, position.z);
+      const enemy = this.spawnEnemy(
+        choose(["crawler", "wisp", "ranger", "brute"]),
+        position,
+        {
+          regionKey: "__cursed__",
+          threat: chest.threat + 1,
+          cursed: true,
+        },
+      );
+      enemy.maxHp = Math.round(enemy.maxHp * 1.22);
+      enemy.hp = enemy.maxHp;
+      enemy.damage = Math.round(enemy.damage * 1.16);
+      enemy.xp = Math.round(enemy.xp * 1.35);
+      enemy.materials.forEach((material) => {
+        material.emissive.setHex(0x551078);
+        material.emissiveIntensity = Math.max(0.7, material.emissiveIntensity);
+      });
+    }
+    this.addFeed(`<b>诅咒试炼</b> · 30 秒内击败 ${required} 名强化敌人`);
+  }
+
+  resolveCursedChallenge(success) {
+    const challenge = this.cursedChallenge;
+    if (!challenge) return;
+    const { chest } = challenge;
+    this.cursedChallenge = null;
+    if (success) {
+      chest.status = "opened";
+      chest.life = 9;
+      const rewardPosition = chest.group.position.clone();
+      this.spawnDrop("gear", rewardPosition, { level: chest.threat + 1, boss: true });
+      this.spawnDrop(
+        "gear",
+        rewardPosition.clone().add(new THREE.Vector3(0.75, 0, 0.35)),
+        { level: chest.threat + 1, boss: false },
+      );
+      this.spawnDrop(
+        "shard",
+        rewardPosition.clone().add(new THREE.Vector3(-0.65, 0, 0.25)),
+        30 + chest.threat * 8,
+      );
+      this.audio.play("regionClear", 1.45);
+      this.spawnBurst(rewardPosition.clone().add(new THREE.Vector3(0, 1, 0)), 28, 0xd685ff, 7);
+      this.addFeed("<b>诅咒破除</b> · 获得双重装备、余烬与一次额外符文选择");
+      this.scheduleAction(0.75, () => this.queueRuneDraft());
+    } else {
+      chest.status = "failed";
+      chest.life = 5;
+      const cursedEnemies = this.enemies.filter((enemy) => enemy.cursed && !enemy.dead);
+      cursedEnemies.forEach((enemy) => {
+        enemy.dead = true;
+        this.scene.remove(enemy.group);
+      });
+      this.enemies = this.enemies.filter((enemy) => !enemy.cursed || enemy.dead === false);
+      this.spawnRing(chest.group.position.clone(), 9, 0x9e35c7, 0.72);
+      this.damagePlayer(
+        Math.round(this.player.maxHp * 0.38),
+        { group: chest.group, type: "curse", damageType: "magic" },
+        "magic",
+      );
+      this.audio.play("bossMagicImpact", 1.25);
+      this.addFeed("<b>诅咒反噬</b> · 挑战失败，损失大量生命且没有奖励");
+    }
+  }
+
+  updateCursedChest(dt) {
+    const chest = this.cursedChest;
+    if (!chest) {
+      ui.interactPrompt.classList.add("hidden");
+      return;
+    }
+    chest.group.position.y = chest.baseY + Math.sin(this.elapsed * 2.6) * 0.06;
+    chest.core.rotation.y += dt * 2.8;
+    chest.core.position.y = 1.12 + Math.sin(this.elapsed * 5.2) * 0.08;
+    const distance = distanceXZ(chest.group.position, this.player.group.position);
+    if (chest.status === "sealed" && distance <= 2.8) {
+      ui.interactPrompt.classList.remove("hidden", "challenge");
+      ui.interactPrompt.querySelector("small").textContent = "高风险交互";
+      ui.interactPrompt.querySelector("strong").textContent = "开启诅咒宝箱";
+    } else if (chest.status === "active" && this.cursedChallenge) {
+      this.cursedChallenge.timer -= dt;
+      ui.interactPrompt.classList.remove("hidden");
+      ui.interactPrompt.classList.add("challenge");
+      ui.interactPrompt.querySelector("small").textContent =
+        `${this.cursedChallenge.kills} / ${this.cursedChallenge.required} 击杀`;
+      ui.interactPrompt.querySelector("strong").textContent =
+        `诅咒倒计时 ${Math.ceil(this.cursedChallenge.timer)} 秒`;
+      if (this.cursedChallenge.timer <= 0) this.resolveCursedChallenge(false);
+    } else {
+      ui.interactPrompt.classList.add("hidden");
+    }
+    if (Number.isFinite(chest.life)) {
+      chest.life -= dt;
+      if (chest.life <= 0) {
+        this.scene.remove(chest.group);
+        this.cursedChest = null;
+        ui.interactPrompt.classList.add("hidden");
+      }
+    }
   }
 
   spawnEnemy(type, position, options = {}) {
@@ -1254,6 +1677,8 @@ class EmberfallGame {
       ui.bossName.textContent = enemy.name;
       ui.bossFill.style.transform = "scaleX(1)";
     }
+    enemy.cursed = Boolean(options.cursed);
+    return enemy;
   }
 
   buildEnemyModel(enemy) {
@@ -1513,6 +1938,14 @@ class EmberfallGame {
     this.effects.forEach((effect) => {
       if (effect.object && !shiftedObjects.has(effect.object)) effect.object.position.sub(shift);
     });
+    if (this.cursedChest?.group) {
+      this.cursedChest.group.position.sub(shift);
+      this.cursedChest.baseY = this.surfaceHeight(
+        this.cursedChest.group.position.x,
+        this.cursedChest.group.position.z,
+        0.04,
+      );
+    }
 
     this.landmarks.position.sub(shift);
     this.decor.position.sub(shift);
@@ -1664,10 +2097,96 @@ class EmberfallGame {
     return from + delta * alpha;
   }
 
+  getRuneRank(id) {
+    return Math.max(0, Number(this.runeRanks[id]) || 0);
+  }
+
+  getActiveRuneCount() {
+    return Object.values(this.runeRanks).reduce((total, rank) => total + Math.max(0, Number(rank) || 0), 0);
+  }
+
+  queueRuneDraft(count = 1) {
+    this.pendingRuneDrafts += Math.max(1, count);
+    if (this.state === "running") this.openNextRuneDraft();
+  }
+
+  openNextRuneDraft() {
+    if (this.pendingRuneDrafts <= 0) return;
+    const available = RUNE_LIBRARY.filter(
+      (rune) => this.getRuneRank(rune.id) < rune.maxRank,
+    );
+    if (!available.length) {
+      this.pendingRuneDrafts = 0;
+      this.player.shards += 80;
+      this.addFeed("<b>符文图谱圆满</b> · 多余灵火化为 80 枚余烬");
+      return;
+    }
+
+    if (this.state === "running") this.saveGame();
+    this.state = "drafting";
+    ui.runeChoices.replaceChildren();
+    const pool = [...available];
+    const choices = [];
+    while (choices.length < Math.min(3, pool.length)) {
+      choices.push(pool.splice(Math.floor(Math.random() * pool.length), 1)[0]);
+    }
+    choices.forEach((rune) => {
+      const currentRank = this.getRuneRank(rune.id);
+      const nextRank = currentRank + 1;
+      const button = document.createElement("button");
+      button.className = `rune-card rune-${rune.skill === "火矢" ? "attack" : rune.skill === "震环" ? "nova" : rune.skill === "裂隙步" ? "dash" : "ward"}`;
+      button.type = "button";
+      button.innerHTML = `
+        <span class="rune-glyph" aria-hidden="true">${rune.glyph}</span>
+        <span class="rune-skill">${rune.skill}符文</span>
+        <strong>${rune.name}</strong>
+        <p>${rune.description(nextRank)}</p>
+        <small>${currentRank ? `升级至 ${nextRank} / ${rune.maxRank}` : `激活 · 1 / ${rune.maxRank}`}</small>
+      `;
+      button.addEventListener("click", () => this.chooseRune(rune));
+      ui.runeChoices.append(button);
+    });
+    ui.runeProgress.textContent = `已激活 ${this.getActiveRuneCount()} 层符文 · 尚有 ${this.pendingRuneDrafts} 次选择`;
+    ui.runeScreen.classList.add("active");
+  }
+
+  chooseRune(rune) {
+    if (this.state !== "drafting") return;
+    const nextRank = Math.min(rune.maxRank, this.getRuneRank(rune.id) + 1);
+    this.runeRanks[rune.id] = nextRank;
+    this.pendingRuneDrafts = Math.max(0, this.pendingRuneDrafts - 1);
+    this.audio.play("gear", 1.35 + nextRank * 0.08);
+    this.addFeed(`<b>${rune.name} · ${nextRank} 级</b> ｜ ${rune.description(nextRank)}`);
+    if (this.pendingRuneDrafts > 0) {
+      this.openNextRuneDraft();
+      return;
+    }
+    ui.runeScreen.classList.remove("active");
+    this.state = "running";
+    this.clock.getDelta();
+    this.updateUI();
+    this.saveGame();
+  }
+
+  scheduleAction(delay, callback) {
+    this.delayedActions.push({ time: Math.max(0, delay), callback });
+  }
+
+  updateDelayedActions(dt) {
+    for (let i = this.delayedActions.length - 1; i >= 0; i -= 1) {
+      const action = this.delayedActions[i];
+      action.time -= dt;
+      if (action.time > 0) continue;
+      this.delayedActions.splice(i, 1);
+      action.callback?.();
+    }
+  }
+
   tryAttack(preferredTarget) {
+    const hasteRank = this.getRuneRank("attack_haste");
     this.skillState.attack.max = Math.max(
-      0.2,
-      0.42 / (1 + this.player.attackSpeed),
+      0.16,
+      0.42 / (1 + this.player.attackSpeed + hasteRank * 0.12),
     );
     if (this.state !== "running" || this.skillState.attack.cooldown > 0 || this.player.action) return;
     let target = preferredTarget;
@@ -1758,25 +2277,57 @@ class EmberfallGame {
   }
 
   releaseNova() {
+    this.releaseNovaPulse(false, 1);
+  }
+
+  releaseNovaPulse(isEcho = false, multiplier = 1) {
     this.audio.play("novaRelease", 1.12);
     const center = this.player.group.position.clone();
-    const damage = Math.round(this.player.skillPower * 1.65 + this.player.damage * 0.35);
-    this.spawnRing(center, 5.2, 0xe76f34, 0.55);
+    const overloadRank = this.getRuneRank("nova_overload");
+    const vortexRank = this.getRuneRank("nova_vortex");
+    const radius = 5.2 + overloadRank * 0.45;
+    const damage = Math.round(
+      (this.player.skillPower * 1.65 + this.player.damage * 0.35) *
+        (1 + overloadRank * 0.18) *
+        multiplier,
+    );
+    if (vortexRank > 0 && !isEcho) {
+      this.enemies.forEach((enemy) => {
+        if (enemy.dead || distanceXZ(center, enemy.group.position) > 7 + vortexRank) return;
+        const pull = center.clone().sub(enemy.group.position).setY(0);
+        if (pull.lengthSq() > 0.01) {
+          enemy.group.position.addScaledVector(
+            pull.normalize(),
+            enemy.type === "boss" ? 0.7 + vortexRank * 0.15 : 1.5 + vortexRank * 0.45,
+          );
+        }
+      });
+    }
+    this.spawnRing(center, radius, isEcho ? 0xffb267 : 0xe76f34, isEcho ? 0.36 : 0.55);
     this.spawnEnergyColumn(center, 0xff7738, 0.42, 4.8);
-    this.spawnBurst(center.clone().add(new THREE.Vector3(0, 0.35, 0)), 22, 0xff8b46, 7);
-    this.cameraShake = Math.max(this.cameraShake, 0.24);
+    this.spawnBurst(center.clone().add(new THREE.Vector3(0, 0.35, 0)), isEcho ? 12 : 22, 0xff8b46, 7);
+    this.cameraShake = Math.max(this.cameraShake, isEcho ? 0.12 : 0.24);
     this.enemies.forEach((enemy) => {
-      if (!enemy.dead && distanceXZ(center, enemy.group.position) <= 5.4) {
+      if (!enemy.dead && distanceXZ(center, enemy.group.position) <= radius + 0.2) {
         this.damageEnemy(enemy, damage, true, "magic");
         const push = enemy.group.position.clone().sub(center).setY(0).normalize();
-        enemy.group.position.addScaledVector(push, enemy.type === "boss" ? 0.6 : 1.4);
+        enemy.group.position.addScaledVector(push, enemy.type === "boss" ? 0.45 : isEcho ? 0.65 : 1.4);
       }
     });
-    this.addFeed("<b>余烬震环</b> · 腐化被震退");
+    if (!isEcho) {
+      this.addFeed("<b>余烬震环</b> · 腐化被震退");
+      const echoRank = this.getRuneRank("nova_echo");
+      if (echoRank > 0) {
+        this.scheduleAction(0.58, () =>
+          this.releaseNovaPulse(true, 0.36 + echoRank * 0.12),
+        );
+      }
+    }
   }
 
   castDash() {
     const skill = this.skillState.dash;
+    skill.max = Math.max(2.1, 4.2 - this.getRuneRank("dash_phase") * 0.55);
     if (this.state !== "running" || skill.cooldown > 0 || this.player.action) return;
     const started = this.beginPlayerAction("dash", 0.34, null, 0.2, true);
     if (!started) return;
@@ -1795,7 +2346,25 @@ class EmberfallGame {
     this.spawnAfterimages(start, destination);
     this.spawnBurst(start.clone().add(new THREE.Vector3(0, 0.8, 0)), 10, 0x69d4c3, 4);
     this.spawnRing(destination, 1.4, 0x5cc9bb, 0.32);
+    const guardRank = this.getRuneRank("dash_guard");
+    if (guardRank > 0) {
+      this.player.shield = Math.max(
+        this.player.shield,
+        Math.round(this.player.maxHp * guardRank * 0.07),
+      );
+    }
+    const blastRank = this.getRuneRank("dash_blast");
+    if (blastRank > 0) {
+      const blastDamage = Math.round(this.player.skillPower * (0.55 + blastRank * 0.2));
+      this.spawnRing(destination, 2.6 + blastRank * 0.2, 0x8d6bea, 0.36);
+      this.enemies.forEach((enemy) => {
+        if (!enemy.dead && distanceXZ(destination, enemy.group.position) <= 2.8 + blastRank * 0.2) {
+          this.damageEnemy(enemy, blastDamage, false, "magic");
+        }
+      });
+    }
     this.cameraShake = Math.max(this.cameraShake, 0.08);
+    this.updateUI();
   }
 
   castWard() {
@@ -1812,6 +2381,24 @@ class EmberfallGame {
   releaseWard() {
     this.audio.play("wardRelease");
     this.player.shield = Math.round(this.player.maxHp * 0.38);
+    const healRank = this.getRuneRank("ward_heal");
+    if (healRank > 0) {
+      const healed = Math.min(
+        Math.round(this.player.maxHp * healRank * 0.07),
+        this.player.maxHp - this.player.hp,
+      );
+      this.player.hp += healed;
+      if (healed > 0) this.spawnDamageNumber(this.player.group.position, `+${healed}`, "#8ee1ba");
+    }
+    const pulseRank = this.getRuneRank("ward_pulse");
+    if (pulseRank > 0) {
+      const pulseDamage = Math.round(this.player.skillPower * (0.45 + pulseRank * 0.2));
+      this.enemies.forEach((enemy) => {
+        if (!enemy.dead && distanceXZ(this.player.group.position, enemy.group.position) <= 4) {
+          this.damageEnemy(enemy, pulseDamage, false, "magic");
+        }
+      });
+    }
     const shieldGroup = new THREE.Group();
     const shield = mesh(
       new THREE.IcosahedronGeometry(1.12, 2),
@@ -2022,12 +2609,51 @@ class EmberfallGame {
       const direction = target.sub(projectile.mesh.position);
       const distance = direction.length();
       if (distance < 0.45) {
+        const impactPosition = projectile.target.group.position.clone();
         this.damageEnemy(
           projectile.target,
           projectile.damage,
           projectile.critical,
           projectile.damageType,
         );
+        const burstRank = this.getRuneRank("attack_burst");
+        if (burstRank > 0) {
+          const radius = 1.25 + burstRank * 0.25;
+          const splashDamage = Math.round(projectile.damage * (0.2 + burstRank * 0.08));
+          this.spawnRing(impactPosition, radius, 0xff9d52, 0.24);
+          this.enemies.forEach((enemy) => {
+            if (
+              enemy !== projectile.target &&
+              !enemy.dead &&
+              distanceXZ(impactPosition, enemy.group.position) <= radius
+            ) {
+              this.damageEnemy(enemy, splashDamage, false, "physical");
+            }
+          });
+        }
+        const chainRank = this.getRuneRank("attack_chain");
+        if (chainRank > 0) {
+          const candidates = this.enemies
+            .filter(
+              (enemy) =>
+                enemy !== projectile.target &&
+                !enemy.dead &&
+                distanceXZ(impactPosition, enemy.group.position) <= 4.5,
+            )
+            .sort(
+              (a, b) =>
+                distanceXZ(impactPosition, a.group.position) -
+                distanceXZ(impactPosition, b.group.position),
+            )
+            .slice(0, chainRank);
+          candidates.forEach((enemy, chainIndex) => {
+            const chainDamage = Math.round(
+              projectile.damage * (0.3 + chainRank * 0.1) * (1 - chainIndex * 0.12),
+            );
+            this.damageEnemy(enemy, chainDamage, false, "magic");
+            this.spawnRing(enemy.group.position.clone(), 0.46, 0xffc06f, 0.17);
+          });
+        }
         this.spawnBurst(projectile.mesh.position.clone(), 7, 0xff7838, 4);
         this.spawnRing(projectile.target.group.position.clone(), 0.72, 0xff8a49, 0.2);
         this.removeProjectile(i);
@@ -2292,6 +2918,29 @@ class EmberfallGame {
     if (enemy.regionKey === this.currentRegionKey) {
       this.waveDefeated = region?.defeated ?? this.waveDefeated + 1;
     }
+    if (enemy.volatile) {
+      const blastRadius = 2.7;
+      this.spawnRing(enemy.group.position.clone(), blastRadius, 0xb44fe0, 0.38);
+      this.spawnBurst(
+        enemy.group.position.clone().add(new THREE.Vector3(0, 0.5, 0)),
+        14,
+        0xb85be3,
+        5,
+      );
+      if (distanceXZ(enemy.group.position, this.player.group.position) <= blastRadius) {
+        this.damagePlayer(
+          Math.round(enemy.damage * 0.72),
+          enemy,
+          "magic",
+        );
+      }
+    }
+    if (enemy.cursed && this.cursedChallenge) {
+      this.cursedChallenge.kills += 1;
+      if (this.cursedChallenge.kills >= this.cursedChallenge.required) {
+        this.resolveCursedChallenge(true);
+      }
+    }
     this.kills += 1;
     if (Object.hasOwn(this.runStats.kills, enemy.type)) {
       this.runStats.kills[enemy.type] += 1;
@@ -2323,6 +2972,14 @@ class EmberfallGame {
         level: enemy.threat,
         boss: enemy.type === "boss",
       });
+    }
+    if (enemy.elite) {
+      this.spawnDrop(
+        "gear",
+        enemy.group.position.clone().add(new THREE.Vector3(0.55, 0, -0.35)),
+        { level: enemy.threat + 1, boss: true },
+      );
+      this.addFeed("<b>悬赏目标已击杀</b> · 精英战利品已掉落");
     }
     if (enemy.type === "boss") {
       ui.bossBar.classList.add("hidden");
@@ -2363,12 +3020,19 @@ class EmberfallGame {
       Math.round(amount * (100 / (100 + Math.max(0, defense) * 5))),
     );
     let remaining = reduced;
+    let absorbed = 0;
     if (this.player.shield > 0) {
-      const absorbed = Math.min(this.player.shield, remaining);
+      absorbed = Math.min(this.player.shield, remaining);
       this.player.shield -= absorbed;
       remaining -= absorbed;
     }
     this.player.hp -= remaining;
+    const thornsRank = this.getRuneRank("ward_thorns");
+    if (absorbed > 0 && thornsRank > 0 && source?.hp > 0 && !source.dead) {
+      const reflected = Math.round(this.player.skillPower * (0.35 + thornsRank * 0.15));
+      this.damageEnemy(source, reflected, false, "magic");
+      this.spawnRing(source.group.position.clone(), 0.8, 0x8ee0d8, 0.2);
+    }
     this.audio.play(
       damageType === "magic" ? "playerMagicHit" : "playerPhysicalHit",
       source?.type === "boss" ? 1.35 : 0.9,
@@ -2479,6 +3143,7 @@ class EmberfallGame {
 
   addXP(amount) {
     this.player.xp += amount;
+    let levelsGained = 0;
     while (this.player.xp >= this.player.xpNeeded) {
       this.player.xp -= this.player.xpNeeded;
       this.player.level += 1;
@@ -2493,7 +3158,9 @@ class EmberfallGame {
       this.spawnRing(this.player.group.position.clone(), 3.2, 0xffad65, 0.7);
       this.spawnBurst(this.player.group.position.clone().add(new THREE.Vector3(0, 1, 0)), 18, 0xffb36b, 6);
       this.addFeed(`<b>灵火升阶</b> · 当前等级 ${this.player.level}`);
+      levelsGained += 1;
     }
+    if (levelsGained > 0) this.queueRuneDraft(levelsGained);
   }
 
   acquireRelic() {
@@ -2954,6 +3621,9 @@ class EmberfallGame {
 
     const region = this.regionStates.get(this.currentRegionKey);
     if (!region) return;
+    if (region.active && region.event?.id === "rush") {
+      region.eventTimeLeft = Math.max(0, region.eventTimeLeft - dt);
+    }
     if (region.active && region.defeated >= region.enemyCount) {
       this.completeRegion(region);
       return;
@@ -2991,6 +3661,44 @@ class EmberfallGame {
         level: region.threat,
         boss: region.hasBoss,
       });
+    }
+    if (region.event?.id === "elite") {
+      this.spawnDrop(
+        "shard",
+        this.player.group.position.clone().add(new THREE.Vector3(-0.6, 0, 0.2)),
+        22 + region.threat * 5,
+      );
+    }
+    if (region.event?.id === "rush") {
+      const onTime = region.eventTimeLeft > 0;
+      if (onTime) {
+        this.spawnDrop("gear", this.player.group.position, {
+          level: region.threat + 1,
+          boss: true,
+        });
+        this.spawnDrop(
+          "shard",
+          this.player.group.position.clone().add(new THREE.Vector3(0.65, 0, 0.3)),
+          28 + region.threat * 6,
+        );
+        this.addFeed("<b>限时猎杀完成</b> · 额外装备与余烬已发放");
+      } else {
+        this.addFeed("<b>限时奖励错过</b> · 区域仍已净化");
+      }
+    }
+    if (region.event?.id === "volatile") {
+      this.spawnDrop(
+        "shard",
+        this.player.group.position.clone().add(new THREE.Vector3(0.55, 0, -0.3)),
+        38 + region.threat * 7,
+      );
+    }
+    if (
+      !this.cursedChallenge &&
+      (!this.cursedChest || this.cursedChest.status !== "sealed") &&
+      (Math.random() < 0.52 || this.regionsCleared % 3 === 0)
+    ) {
+      this.spawnCursedChest(region);
     }
     this.addFeed(
       `<b>${region.biome.name} 已净化</b> · ${respawnSeconds} 秒后随机重生，继续前往相邻区域`,
@@ -3055,9 +3763,9 @@ class EmberfallGame {
   }
 
   saveGame() {
-    if (!["running", "paused", "victory"].includes(this.state)) return;
+    if (!["running", "paused", "victory", "drafting"].includes(this.state)) return;
     const data = {
-      version: 1,
+      version: 2,
       wave: this.wave,
       kills: this.kills,
       victorySeen: this.victorySeen,
@@ -3067,6 +3775,10 @@ class EmberfallGame {
         offsetX: this.worldOffset.x,
         offsetZ: this.worldOffset.y,
         regionsCleared: this.regionsCleared,
+      },
+      progression: {
+        runeRanks: this.runeRanks,
+        pendingRuneDrafts: this.pendingRuneDrafts,
       },
       player: {
         hp: this.player.hp,
@@ -3106,6 +3818,14 @@ class EmberfallGame {
         Number(data.world?.regionsCleared) || data.runStats?.wavesCleared || 0,
       );
       this.runId = data.runId || this.leaderboard.createRunId();
+      this.runeRanks =
+        data.progression?.runeRanks && typeof data.progression.runeRanks === "object"
+          ? { ...data.progression.runeRanks }
+          : {};
+      this.pendingRuneDrafts = Math.max(
+        0,
+        Number(data.progression?.pendingRuneDrafts) || 0,
+      );
       if (data.runStats) {
         this.runStats = normalizeRunStats(data.runStats);
       } else {
@@ -3151,6 +3871,7 @@ class EmberfallGame {
     ui.shardStat.textContent = String(player.shards);
     ui.currentScore.textContent = formatScore(calculateScore(this.runStats).total);
     ui.potionCount.textContent = String(player.potions);
+    ui.runeProgress.textContent = `已激活 ${this.getActiveRuneCount()} 层符文`;
 
     const worldPosition = this.getPlayerWorldPosition();
     const region = this.regionStates.get(this.currentRegionKey);
@@ -3216,6 +3937,14 @@ class EmberfallGame {
       ctx.arc(point.x, point.y, enemy.type === "boss" ? 4.5 : 2.2, 0, Math.PI * 2);
       ctx.fill();
     });
+    if (this.cursedChest) {
+      const point = mapPosition(this.cursedChest.group.position);
+      ctx.fillStyle = this.cursedChest.status === "active" ? "#ff80df" : "#bb72ea";
+      ctx.strokeStyle = "rgba(255, 210, 255, .8)";
+      ctx.lineWidth = 1;
+      ctx.fillRect(point.x - 3.5, point.y - 3.5, 7, 7);
+      ctx.strokeRect(point.x - 4.5, point.y - 4.5, 9, 9);
+    }
     const playerPoint = { x: center, y: center };
     ctx.fillStyle = "#76d8c6";
     ctx.beginPath();
@@ -3268,6 +3997,8 @@ class EmberfallGame {
       this.updateEnemies(dt);
       this.updateProjectiles(dt);
       this.updateDrops(dt);
+      this.updateDelayedActions(dt);
+      this.updateCursedChest(dt);
       this.updateEffects(dt);
       this.updateDamageNumbers(dt);
       this.updateCooldowns(dt);
