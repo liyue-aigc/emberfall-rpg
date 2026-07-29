@@ -1151,6 +1151,7 @@ class EmberfallGame {
         material.emissive.setHex(0x6f2c08);
         material.emissiveIntensity = Math.max(material.emissiveIntensity, 0.65);
       });
+      if (!enemy.threatAura) this.createEnemyThreatAura(enemy);
     }
   }
 
@@ -1613,8 +1614,25 @@ class EmberfallGame {
     };
     const base = presets[type];
     const threat = Math.max(1, options.threat ?? this.wave);
-    const healthScale = 1 + Math.max(0, threat - 1) * (type === "boss" ? 0.3 : 0.22);
-    const damageScale = 1 + Math.max(0, threat - 1) * (type === "boss" ? 0.17 : 0.135);
+    const threatStep = Math.max(0, threat - 1);
+    const healthScale =
+      1 +
+      threatStep * (type === "boss" ? 0.34 : 0.25) +
+      Math.pow(threatStep, 1.18) * (type === "boss" ? 0.045 : 0.032);
+    const damageScale = this.getThreatDamageMultiplier(threat, type === "boss");
+    const attackRate = Math.min(
+      1.82,
+      1 +
+        threatStep * 0.052 +
+        Math.pow(threatStep, 1.15) * 0.014 +
+        this.getActiveRuneCount() * 0.009,
+    );
+    const defensePenetration = Math.min(
+      0.62,
+      threatStep * 0.045 +
+        Math.pow(threatStep, 1.1) * 0.012 +
+        this.getActiveRuneCount() * 0.008,
+    );
     const enemy = {
       type,
       name: base.name,
@@ -1633,11 +1651,15 @@ class EmberfallGame {
       magicResist: Math.round(base.magicResist * (1 + Math.max(0, threat - 1) * 0.12)),
       ranged: Boolean(base.ranged),
       damageType: base.damageType,
+      damageScale,
+      attackRate,
+      defensePenetration,
+      projectileSpeedScale: Math.min(1.65, 1 + threatStep * 0.045),
       threat,
       regionKey: options.regionKey ?? this.currentRegionKey,
       biome: options.biome,
       attackCooldown: base.ranged ? rand(1.35, 2.45) : rand(0.35, 0.95),
-      specialCooldown: type === "boss" ? 2.8 : Infinity,
+      specialCooldown: type === "boss" ? 2.8 / attackRate : Infinity,
       specialIndex: 0,
       aggroDelay:
         type === "boss"
@@ -1669,6 +1691,7 @@ class EmberfallGame {
     enemy.hitbox = hitbox;
 
     this.createEnemyHealthBar(enemy);
+    this.createEnemyThreatAura(enemy);
     this.scene.add(enemy.group);
     this.enemies.push(enemy);
 
@@ -1679,6 +1702,57 @@ class EmberfallGame {
     }
     enemy.cursed = Boolean(options.cursed);
     return enemy;
+  }
+
+  createEnemyThreatAura(enemy) {
+    if (enemy.threat < 3 && !enemy.elite) return;
+    const color =
+      enemy.elite
+        ? 0xffc46d
+        : enemy.damageType === "magic"
+          ? 0xb46cff
+          : enemy.threat >= 7
+            ? 0xff3f31
+            : 0xe67842;
+    const group = new THREE.Group();
+    const ring = mesh(
+      new THREE.TorusGeometry(enemy.radius * 1.42, 0.028 + Math.min(0.035, enemy.threat * 0.004), 6, 36),
+      new THREE.MeshBasicMaterial({
+        color,
+        transparent: true,
+        opacity: 0.46,
+        depthWrite: false,
+        blending: THREE.AdditiveBlending,
+      }),
+      false,
+    );
+    ring.rotation.x = Math.PI / 2;
+    group.add(ring);
+    const nodeCount = Math.min(6, 2 + Math.floor(enemy.threat / 2));
+    const nodes = [];
+    for (let index = 0; index < nodeCount; index += 1) {
+      const angle = (index / nodeCount) * Math.PI * 2;
+      const node = mesh(
+        new THREE.TetrahedronGeometry(0.065 + enemy.threat * 0.004, 0),
+        new THREE.MeshBasicMaterial({
+          color,
+          transparent: true,
+          opacity: 0.62,
+          depthWrite: false,
+        }),
+        false,
+      );
+      node.position.set(
+        Math.cos(angle) * enemy.radius * 1.42,
+        0.08,
+        Math.sin(angle) * enemy.radius * 1.42,
+      );
+      nodes.push(node);
+      group.add(node);
+    }
+    group.position.y = 0.06;
+    enemy.group.add(group);
+    enemy.threatAura = { group, ring, nodes };
   }
 
   buildEnemyModel(enemy) {
@@ -2101,6 +2175,21 @@ class EmberfallGame {
     return Math.max(0, Number(this.runeRanks[id]) || 0);
   }
 
+  getThreatDamageMultiplier(threat = this.wave, boss = false) {
+    const threatStep = Math.max(0, threat - 1);
+    const runePressure = Math.min(0.42, this.getActiveRuneCount() * 0.034);
+    const levelPressure = Math.min(
+      0.28,
+      Math.max(0, this.player.level - 1) * 0.014,
+    );
+    return (
+      (1 +
+        threatStep * (boss ? 0.22 : 0.29) +
+        Math.pow(threatStep, 1.35) * (boss ? 0.05 : 0.07)) *
+      (1 + runePressure + levelPressure)
+    );
+  }
+
   getActiveRuneCount() {
     return Object.values(this.runeRanks).reduce((total, rank) => total + Math.max(0, Number(rank) || 0), 0);
   }
@@ -2211,12 +2300,27 @@ class EmberfallGame {
     this.audio.play("attackRelease");
     this.player.rig.staffGem.updateWorldMatrix(true, false);
     const start = this.player.rig.staffGem.getWorldPosition(new THREE.Vector3());
+    const chainRank = this.getRuneRank("attack_chain");
+    const burstRank = this.getRuneRank("attack_burst");
+    const hasteRank = this.getRuneRank("attack_haste");
+    const projectileColor =
+      chainRank > 0
+        ? 0xffcf67
+        : hasteRank > 0
+          ? 0x70e1c6
+          : burstRank > 0
+            ? 0xff7142
+            : 0xffa45f;
     const projectileGroup = new THREE.Group();
     projectileGroup.position.copy(start);
     const core = mesh(
-      new THREE.IcosahedronGeometry(0.17, 1),
-      makeMaterial(0xffa45f, {
-        emissive: 0xff571f,
+      burstRank > 0
+        ? new THREE.DodecahedronGeometry(0.21 + burstRank * 0.018, 0)
+        : hasteRank > 0
+          ? new THREE.OctahedronGeometry(0.2, 0)
+          : new THREE.IcosahedronGeometry(0.17, 1),
+      makeMaterial(projectileColor, {
+        emissive: projectileColor,
         emissiveIntensity: 4.2,
         roughness: 0.12,
       }),
@@ -2224,7 +2328,7 @@ class EmberfallGame {
     );
     projectileGroup.add(core);
     const haloMaterial = new THREE.MeshBasicMaterial({
-      color: 0xffbb76,
+      color: projectileColor,
       transparent: true,
       opacity: 0.72,
       depthWrite: false,
@@ -2235,6 +2339,67 @@ class EmberfallGame {
     haloA.rotation.x = Math.PI / 2;
     haloB.rotation.y = Math.PI / 2;
     projectileGroup.add(haloA, haloB);
+    const runeOrnaments = [];
+    if (chainRank > 0) {
+      for (let index = 0; index < 2 + chainRank; index += 1) {
+        const prong = mesh(
+          new THREE.TetrahedronGeometry(0.075 + chainRank * 0.008, 0),
+          new THREE.MeshBasicMaterial({
+            color: 0xffe09a,
+            transparent: true,
+            opacity: 0.9,
+            depthWrite: false,
+          }),
+          false,
+        );
+        const angle = (index / (2 + chainRank)) * Math.PI * 2;
+        prong.position.set(Math.cos(angle) * 0.37, Math.sin(angle * 2) * 0.12, Math.sin(angle) * 0.37);
+        prong.userData.orbitAngle = angle;
+        prong.userData.orbitRadius = 0.37;
+        runeOrnaments.push(prong);
+        projectileGroup.add(prong);
+      }
+    }
+    if (burstRank > 0) {
+      for (let index = 0; index < 3 + burstRank; index += 1) {
+        const shard = mesh(
+          new THREE.ConeGeometry(0.065, 0.32 + burstRank * 0.04, 5),
+          new THREE.MeshBasicMaterial({
+            color: index % 2 ? 0xffb04f : 0xff5c37,
+            transparent: true,
+            opacity: 0.82,
+            depthWrite: false,
+          }),
+          false,
+        );
+        const angle = (index / (3 + burstRank)) * Math.PI * 2;
+        shard.position.set(Math.cos(angle) * 0.3, Math.sin(angle * 1.5) * 0.16, Math.sin(angle) * 0.3);
+        shard.rotation.z = angle;
+        shard.userData.spin = index % 2 ? 1 : -1;
+        runeOrnaments.push(shard);
+        projectileGroup.add(shard);
+      }
+    }
+    if (hasteRank > 0) {
+      for (let index = -1; index <= 1; index += 2) {
+        const fin = mesh(
+          new THREE.ConeGeometry(0.08, 0.62 + hasteRank * 0.08, 5),
+          new THREE.MeshBasicMaterial({
+            color: 0x8bffe4,
+            transparent: true,
+            opacity: 0.68,
+            depthWrite: false,
+            blending: THREE.AdditiveBlending,
+          }),
+          false,
+        );
+        fin.position.set(index * 0.18, 0, 0.34);
+        fin.rotation.x = Math.PI / 2;
+        fin.userData.hasteFin = true;
+        runeOrnaments.push(fin);
+        projectileGroup.add(fin);
+      }
+    }
     this.scene.add(projectileGroup);
 
     const trailPositions = Array.from({ length: 9 }, () => start.clone());
@@ -2243,7 +2408,12 @@ class EmberfallGame {
     trailGeometry.setAttribute("position", new THREE.BufferAttribute(trailArray, 3));
     const trailLine = new THREE.Line(
       trailGeometry,
-      new THREE.LineBasicMaterial({ color: 0xff8b47, transparent: true, opacity: 0.68, depthWrite: false }),
+      new THREE.LineBasicMaterial({
+        color: projectileColor,
+        transparent: true,
+        opacity: 0.72,
+        depthWrite: false,
+      }),
     );
     this.scene.add(trailLine);
 
@@ -2252,17 +2422,23 @@ class EmberfallGame {
       core,
       haloA,
       haloB,
+      runeOrnaments,
+      chainRank,
+      burstRank,
+      hasteRank,
       trailLine,
       trailPositions,
       trailGeometry,
       target,
-      speed: 19,
+      speed: 19 + hasteRank * 1.4,
       damage: this.player.damage,
       damageType: "physical",
       critical: Math.random() < this.player.critChance,
       life: 1.4,
     });
-    this.createMuzzleBurst(start);
+    this.createMuzzleBurst(start, projectileColor, 4 + chainRank + burstRank + hasteRank);
+    if (chainRank > 0) this.spawnRing(start.clone(), 0.55 + chainRank * 0.08, 0xffcf67, 0.18);
+    if (burstRank > 0) this.spawnRuneExplosion(start.clone(), 0.5, 0xff7040, 0.2, 3 + burstRank);
   }
 
   castNova() {
@@ -2292,6 +2468,12 @@ class EmberfallGame {
         multiplier,
     );
     if (vortexRank > 0 && !isEcho) {
+      this.spawnVortexEffect(
+        center,
+        6.4 + vortexRank * 0.55,
+        0xb26cff,
+        0.82,
+      );
       this.enemies.forEach((enemy) => {
         if (enemy.dead || distanceXZ(center, enemy.group.position) > 7 + vortexRank) return;
         const pull = center.clone().sub(enemy.group.position).setY(0);
@@ -2304,7 +2486,38 @@ class EmberfallGame {
       });
     }
     this.spawnRing(center, radius, isEcho ? 0xffb267 : 0xe76f34, isEcho ? 0.36 : 0.55);
-    this.spawnEnergyColumn(center, 0xff7738, 0.42, 4.8);
+    if (overloadRank > 0) {
+      for (let ringIndex = 1; ringIndex <= overloadRank; ringIndex += 1) {
+        this.spawnRing(
+          center.clone(),
+          radius * (0.45 + ringIndex * 0.17),
+          ringIndex % 2 ? 0xff4d31 : 0xffc15f,
+          0.34 + ringIndex * 0.08,
+        );
+      }
+      this.spawnRuneExplosion(
+        center.clone(),
+        2.1 + overloadRank * 0.42,
+        0xff5a35,
+        0.55,
+        8 + overloadRank * 3,
+      );
+    }
+    if (isEcho) {
+      this.spawnRuneExplosion(
+        center.clone(),
+        1.45 + this.getRuneRank("nova_echo") * 0.25,
+        0xffc078,
+        0.36,
+        5 + this.getRuneRank("nova_echo"),
+      );
+    }
+    this.spawnEnergyColumn(
+      center,
+      vortexRank > 0 ? 0xb56cff : isEcho ? 0xffb267 : 0xff7738,
+      0.42,
+      4.8 + overloadRank * 0.7,
+    );
     this.spawnBurst(center.clone().add(new THREE.Vector3(0, 0.35, 0)), isEcho ? 12 : 22, 0xff8b46, 7);
     this.cameraShake = Math.max(this.cameraShake, isEcho ? 0.12 : 0.24);
     this.enemies.forEach((enemy) => {
@@ -2346,17 +2559,37 @@ class EmberfallGame {
     this.spawnAfterimages(start, destination);
     this.spawnBurst(start.clone().add(new THREE.Vector3(0, 0.8, 0)), 10, 0x69d4c3, 4);
     this.spawnRing(destination, 1.4, 0x5cc9bb, 0.32);
+    const phaseRank = this.getRuneRank("dash_phase");
+    if (phaseRank > 0) {
+      this.spawnPortalEffect(start.clone(), 0x57e7cf, 0.38 + phaseRank * 0.05);
+      this.spawnPortalEffect(destination.clone(), 0x86ffe8, 0.46 + phaseRank * 0.06);
+      this.spawnDashTrail(
+        start.clone().add(new THREE.Vector3(0.18, 0, -0.18)),
+        destination.clone().add(new THREE.Vector3(0.18, 0, -0.18)),
+        0x8bffe8,
+        0.34,
+      );
+    }
     const guardRank = this.getRuneRank("dash_guard");
     if (guardRank > 0) {
       this.player.shield = Math.max(
         this.player.shield,
         Math.round(this.player.maxHp * guardRank * 0.07),
       );
+      this.spawnGuardShell(0x8affdf, 1.8 + guardRank * 0.55);
+      this.spawnRuneExplosion(destination.clone(), 1 + guardRank * 0.18, 0x73e6d0, 0.32, 4 + guardRank);
     }
     const blastRank = this.getRuneRank("dash_blast");
     if (blastRank > 0) {
       const blastDamage = Math.round(this.player.skillPower * (0.55 + blastRank * 0.2));
       this.spawnRing(destination, 2.6 + blastRank * 0.2, 0x8d6bea, 0.36);
+      this.spawnRuneExplosion(
+        destination.clone(),
+        2.2 + blastRank * 0.32,
+        0x9d65f0,
+        0.48,
+        7 + blastRank * 3,
+      );
       this.enemies.forEach((enemy) => {
         if (!enemy.dead && distanceXZ(destination, enemy.group.position) <= 2.8 + blastRank * 0.2) {
           this.damageEnemy(enemy, blastDamage, false, "magic");
@@ -2389,6 +2622,18 @@ class EmberfallGame {
       );
       this.player.hp += healed;
       if (healed > 0) this.spawnDamageNumber(this.player.group.position, `+${healed}`, "#8ee1ba");
+      this.spawnEnergyColumn(
+        this.player.group.position.clone(),
+        0x68e6a7,
+        0.5,
+        3.4 + healRank * 0.65,
+      );
+      this.spawnVortexEffect(
+        this.player.group.position.clone(),
+        1.4 + healRank * 0.22,
+        0x75e6b2,
+        0.52,
+      );
     }
     const pulseRank = this.getRuneRank("ward_pulse");
     if (pulseRank > 0) {
@@ -2398,7 +2643,21 @@ class EmberfallGame {
           this.damageEnemy(enemy, pulseDamage, false, "magic");
         }
       });
+      this.spawnRuneExplosion(
+        this.player.group.position.clone(),
+        2.2 + pulseRank * 0.35,
+        0x74e3d5,
+        0.5,
+        8 + pulseRank * 2,
+      );
+      this.spawnRing(
+        this.player.group.position.clone(),
+        4,
+        0x92f5e7,
+        0.52,
+      );
     }
+    const thornsRank = this.getRuneRank("ward_thorns");
     const shieldGroup = new THREE.Group();
     const shield = mesh(
       new THREE.IcosahedronGeometry(1.12, 2),
@@ -2433,6 +2692,32 @@ class EmberfallGame {
       plate.position.set(Math.cos(angle) * 1.22, Math.sin(angle * 2) * 0.35, Math.sin(angle) * 1.22);
       plate.lookAt(0, 0, 0);
       shieldGroup.add(plate);
+    }
+    if (thornsRank > 0) {
+      const thornCount = 6 + thornsRank * 2;
+      const up = new THREE.Vector3(0, 1, 0);
+      for (let index = 0; index < thornCount; index += 1) {
+        const angle = (index / thornCount) * Math.PI * 2;
+        const vertical = index % 2 ? 0.42 : -0.2;
+        const outward = new THREE.Vector3(
+          Math.cos(angle),
+          vertical,
+          Math.sin(angle),
+        ).normalize();
+        const thorn = mesh(
+          new THREE.ConeGeometry(0.075 + thornsRank * 0.012, 0.46 + thornsRank * 0.08, 5),
+          new THREE.MeshBasicMaterial({
+            color: 0xbda1ff,
+            transparent: true,
+            opacity: 0.72,
+            depthWrite: false,
+          }),
+          false,
+        );
+        thorn.position.copy(outward).multiplyScalar(1.22);
+        thorn.quaternion.setFromUnitVectors(up, outward);
+        shieldGroup.add(thorn);
+      }
     }
     shieldGroup.position.copy(this.player.group.position).add(new THREE.Vector3(0, 1.12, 0));
     this.scene.add(shieldGroup);
@@ -2524,7 +2809,9 @@ class EmberfallGame {
     const velocity = target
       .sub(group.position)
       .normalize()
-      .multiplyScalar(magic ? 10.5 : 14.5);
+      .multiplyScalar(
+        (magic ? 10.5 : 14.5) * (enemy.projectileSpeedScale ?? 1),
+      );
     const trailPositions = Array.from({ length: 7 }, () => group.position.clone());
     const trailGeometry = new THREE.BufferGeometry();
     trailGeometry.setAttribute(
@@ -2610,17 +2897,27 @@ class EmberfallGame {
       const distance = direction.length();
       if (distance < 0.45) {
         const impactPosition = projectile.target.group.position.clone();
+        const impactOrigin = impactPosition
+          .clone()
+          .add(new THREE.Vector3(0, projectile.target.type === "boss" ? 1.7 : 0.9, 0));
         this.damageEnemy(
           projectile.target,
           projectile.damage,
           projectile.critical,
           projectile.damageType,
         );
-        const burstRank = this.getRuneRank("attack_burst");
+        const burstRank = projectile.burstRank ?? 0;
         if (burstRank > 0) {
           const radius = 1.25 + burstRank * 0.25;
           const splashDamage = Math.round(projectile.damage * (0.2 + burstRank * 0.08));
           this.spawnRing(impactPosition, radius, 0xff9d52, 0.24);
+          this.spawnRuneExplosion(
+            impactPosition.clone(),
+            radius,
+            0xff6638,
+            0.42,
+            6 + burstRank * 2,
+          );
           this.enemies.forEach((enemy) => {
             if (
               enemy !== projectile.target &&
@@ -2631,7 +2928,7 @@ class EmberfallGame {
             }
           });
         }
-        const chainRank = this.getRuneRank("attack_chain");
+        const chainRank = projectile.chainRank ?? 0;
         if (chainRank > 0) {
           const candidates = this.enemies
             .filter(
@@ -2651,8 +2948,24 @@ class EmberfallGame {
               projectile.damage * (0.3 + chainRank * 0.1) * (1 - chainIndex * 0.12),
             );
             this.damageEnemy(enemy, chainDamage, false, "magic");
+            this.spawnEnergyArc(
+              impactOrigin,
+              enemy.group.position.clone().add(new THREE.Vector3(0, enemy.type === "boss" ? 1.7 : 0.9, 0)),
+              0xffd36e,
+              0.32,
+              Math.min(3, 1 + chainRank),
+            );
             this.spawnRing(enemy.group.position.clone(), 0.46, 0xffc06f, 0.17);
           });
+        }
+        if ((projectile.hasteRank ?? 0) > 0) {
+          this.spawnEnergyArc(
+            projectile.mesh.position.clone(),
+            impactOrigin,
+            0x73f2d0,
+            0.18,
+            1,
+          );
         }
         this.spawnBurst(projectile.mesh.position.clone(), 7, 0xff7838, 4);
         this.spawnRing(projectile.target.group.position.clone(), 0.72, 0xff8a49, 0.2);
@@ -2662,6 +2975,22 @@ class EmberfallGame {
         projectile.core.scale.setScalar(0.88 + Math.sin(this.elapsed * 28) * 0.14);
         projectile.haloA.rotation.z += dt * 8;
         projectile.haloB.rotation.x += dt * 7;
+        projectile.runeOrnaments?.forEach((ornament, ornamentIndex) => {
+          if (ornament.userData.orbitAngle !== undefined) {
+            ornament.userData.orbitAngle += dt * (8 + (projectile.chainRank ?? 0) * 1.8);
+            ornament.position.x =
+              Math.cos(ornament.userData.orbitAngle) * ornament.userData.orbitRadius;
+            ornament.position.z =
+              Math.sin(ornament.userData.orbitAngle) * ornament.userData.orbitRadius;
+            ornament.position.y =
+              Math.sin(ornament.userData.orbitAngle * 2 + ornamentIndex) * 0.13;
+          }
+          if (ornament.userData.hasteFin) {
+            ornament.scale.y = 0.8 + Math.sin(this.elapsed * 36 + ornamentIndex) * 0.24;
+          }
+          ornament.rotation.x += dt * (5 + ornamentIndex);
+          ornament.rotation.y += dt * (7 + ornamentIndex * 0.7);
+        });
         projectile.trailPositions.unshift(projectile.mesh.position.clone());
         projectile.trailPositions.length = 9;
         const attribute = projectile.trailGeometry.getAttribute("position");
@@ -2695,6 +3024,19 @@ class EmberfallGame {
           material.emissiveIntensity = material.userData.baseIntensity;
         }
       });
+      if (enemy.threatAura) {
+        enemy.threatAura.group.rotation.y +=
+          dt * (0.7 + Math.min(1.8, enemy.threat * 0.08));
+        enemy.threatAura.ring.material.opacity =
+          0.34 + Math.sin(this.elapsed * 4.2 + enemy.phase) * 0.14;
+        enemy.threatAura.nodes.forEach((node, nodeIndex) => {
+          node.position.y =
+            0.08 +
+            Math.sin(this.elapsed * 5.5 + nodeIndex * 1.7 + enemy.phase) * 0.07;
+          node.rotation.x += dt * 3.2;
+          node.rotation.y += dt * 4.4;
+        });
+      }
 
       const toPlayer = playerPosition.clone().sub(enemy.group.position).setY(0);
       const distance = toPlayer.length();
@@ -2733,7 +3075,9 @@ class EmberfallGame {
             .normalize();
           enemy.group.position.addScaledVector(strafe, enemy.speed * dt * 0.32);
           if (enemy.attackCooldown <= 0) {
-            enemy.attackCooldown = enemy.type === "wisp" ? rand(1.45, 1.9) : rand(1.15, 1.55);
+            enemy.attackCooldown =
+              (enemy.type === "wisp" ? rand(1.45, 1.9) : rand(1.15, 1.55)) /
+              (enemy.attackRate ?? 1);
             enemy.attackAnim = 0.44;
             this.fireEnemyProjectile(enemy);
           }
@@ -2745,7 +3089,9 @@ class EmberfallGame {
           enemy.speed * dt * (enemy.aggroDelay > 0 ? 0.48 : 1),
         );
       } else if (enemy.attackCooldown <= 0) {
-        enemy.attackCooldown = enemy.type === "boss" ? 1.25 : rand(0.78, 1.16);
+        enemy.attackCooldown =
+          (enemy.type === "boss" ? 1.25 : rand(0.78, 1.16)) /
+          (enemy.attackRate ?? 1);
         enemy.attackAnim = enemy.type === "boss" ? 0.52 : 0.34;
         this.damagePlayer(enemy.damage, enemy, enemy.damageType);
         enemy.body.scale.y = 0.84;
@@ -2818,7 +3164,9 @@ class EmberfallGame {
       kind: isMagicStorm ? "虚空风暴" : "熔炉震击",
     };
     const healthPressure = 1 - enemy.hp / enemy.maxHp;
-    enemy.specialCooldown = Math.max(3.1, 5.7 - healthPressure * 1.8);
+    enemy.specialCooldown =
+      Math.max(2.4, 5.7 - healthPressure * 1.8) /
+      Math.min(1.45, enemy.attackRate ?? 1);
     this.addFeed(
       isMagicStorm
         ? "<b>虚空风暴</b> · 全屏魔法伤害，冲刺或结界可抵挡"
@@ -3015,9 +3363,11 @@ class EmberfallGame {
     if (this.player.invulnerable > 0 || this.state !== "running") return;
     const defense =
       damageType === "magic" ? this.player.magicResist : this.player.armor;
+    const penetration = clamp(source?.defensePenetration ?? 0, 0, 0.75);
+    const effectiveDefense = Math.max(0, defense * (1 - penetration));
     const reduced = Math.max(
       1,
-      Math.round(amount * (100 / (100 + Math.max(0, defense) * 5))),
+      Math.round(amount * (100 / (100 + effectiveDefense * 5))),
     );
     let remaining = reduced;
     let absorbed = 0;
@@ -3031,6 +3381,20 @@ class EmberfallGame {
     if (absorbed > 0 && thornsRank > 0 && source?.hp > 0 && !source.dead) {
       const reflected = Math.round(this.player.skillPower * (0.35 + thornsRank * 0.15));
       this.damageEnemy(source, reflected, false, "magic");
+      this.spawnEnergyArc(
+        this.player.group.position.clone().add(new THREE.Vector3(0, 1.1, 0)),
+        source.group.position.clone().add(new THREE.Vector3(0, source.type === "boss" ? 1.8 : 0.9, 0)),
+        0xbda1ff,
+        0.3,
+        Math.min(3, 1 + thornsRank),
+      );
+      this.spawnRuneExplosion(
+        source.group.position.clone(),
+        0.7 + thornsRank * 0.12,
+        0xa98af5,
+        0.28,
+        4 + thornsRank,
+      );
       this.spawnRing(source.group.position.clone(), 0.8, 0x8ee0d8, 0.2);
     }
     this.audio.play(
@@ -3484,6 +3848,280 @@ class EmberfallGame {
     });
   }
 
+  spawnEnergyArc(start, end, color = 0xffc16a, duration = 0.28, branches = 2) {
+    const group = new THREE.Group();
+    const midpoint = start.clone().lerp(end, 0.5);
+    const distance = start.distanceTo(end);
+    const direction = end.clone().sub(start).normalize();
+    const side = new THREE.Vector3(-direction.z, 0, direction.x);
+    for (let branch = 0; branch < branches; branch += 1) {
+      const points = [start.clone()];
+      for (let index = 1; index < 5; index += 1) {
+        const progress = index / 5;
+        const point = start.clone().lerp(end, progress);
+        point.y += Math.sin(progress * Math.PI) * (0.25 + branch * 0.08);
+        point.addScaledVector(
+          side,
+          Math.sin(progress * Math.PI * (3 + branch)) *
+            distance *
+            0.035 *
+            (branch % 2 ? -1 : 1),
+        );
+        points.push(point);
+      }
+      points.push(end.clone());
+      const curve = new THREE.CatmullRomCurve3(points);
+      const arc = mesh(
+        new THREE.TubeGeometry(curve, 18, branch === 0 ? 0.035 : 0.018, 5, false),
+        new THREE.MeshBasicMaterial({
+          color,
+          transparent: true,
+          opacity: branch === 0 ? 0.92 : 0.52,
+          depthWrite: false,
+          blending: THREE.AdditiveBlending,
+        }),
+        false,
+      );
+      group.add(arc);
+    }
+    const node = mesh(
+      new THREE.OctahedronGeometry(0.11, 0),
+      new THREE.MeshBasicMaterial({
+        color,
+        transparent: true,
+        opacity: 0.9,
+        depthWrite: false,
+      }),
+      false,
+    );
+    node.position.copy(midpoint);
+    group.add(node);
+    this.scene.add(group);
+    this.effects.push({
+      object: group,
+      life: duration,
+      maxLife: duration,
+      update: (effect, dt) => {
+        const alpha = clamp(effect.life / effect.maxLife, 0, 1);
+        effect.object.children.forEach((child) => {
+          if (child.material) child.material.opacity = alpha * (child === node ? 0.9 : 0.72);
+        });
+        node.rotation.x += dt * 10;
+        node.rotation.y += dt * 13;
+        node.scale.setScalar(1 + (1 - alpha) * 1.8);
+      },
+    });
+  }
+
+  spawnRuneExplosion(position, radius, color, duration = 0.48, shardCount = 8) {
+    const group = new THREE.Group();
+    group.position.copy(position);
+    group.position.y += 0.12;
+    const shell = mesh(
+      new THREE.IcosahedronGeometry(1, 1),
+      new THREE.MeshBasicMaterial({
+        color,
+        transparent: true,
+        opacity: 0.28,
+        wireframe: true,
+        depthWrite: false,
+        blending: THREE.AdditiveBlending,
+      }),
+      false,
+    );
+    group.add(shell);
+    const shards = [];
+    for (let index = 0; index < shardCount; index += 1) {
+      const angle = (index / shardCount) * Math.PI * 2;
+      const shard = mesh(
+        new THREE.TetrahedronGeometry(0.12 + (index % 3) * 0.025, 0),
+        new THREE.MeshBasicMaterial({
+          color,
+          transparent: true,
+          opacity: 0.82,
+          depthWrite: false,
+        }),
+        false,
+      );
+      shard.position.set(Math.cos(angle) * 0.45, 0.15 + (index % 2) * 0.2, Math.sin(angle) * 0.45);
+      shard.userData.velocity = new THREE.Vector3(
+        Math.cos(angle),
+        0.24 + (index % 3) * 0.12,
+        Math.sin(angle),
+      ).multiplyScalar(radius * (0.65 + (index % 2) * 0.16));
+      shards.push(shard);
+      group.add(shard);
+    }
+    this.scene.add(group);
+    this.effects.push({
+      object: group,
+      life: duration,
+      maxLife: duration,
+      update: (effect, dt) => {
+        const progress = 1 - effect.life / effect.maxLife;
+        const alpha = 1 - progress;
+        shell.scale.setScalar(0.12 + progress * radius);
+        shell.rotation.x += dt * 3.2;
+        shell.rotation.y -= dt * 4.1;
+        shell.material.opacity = alpha * 0.28;
+        shards.forEach((shard) => {
+          shard.position.addScaledVector(shard.userData.velocity, dt);
+          shard.rotation.x += dt * 9;
+          shard.rotation.y += dt * 7;
+          shard.material.opacity = alpha * 0.82;
+        });
+      },
+    });
+  }
+
+  spawnVortexEffect(position, radius, color = 0xb76aff, duration = 0.7) {
+    const points = [];
+    const turns = 3.25;
+    for (let index = 0; index < 64; index += 1) {
+      const progress = index / 63;
+      const angle = progress * Math.PI * 2 * turns;
+      const currentRadius = 0.2 + progress * radius;
+      points.push(
+        new THREE.Vector3(
+          Math.cos(angle) * currentRadius,
+          progress * 0.12,
+          Math.sin(angle) * currentRadius,
+        ),
+      );
+    }
+    const spiral = new THREE.Line(
+      new THREE.BufferGeometry().setFromPoints(points),
+      new THREE.LineBasicMaterial({
+        color,
+        transparent: true,
+        opacity: 0.82,
+        depthWrite: false,
+        blending: THREE.AdditiveBlending,
+      }),
+    );
+    const group = new THREE.Group();
+    group.position.copy(position);
+    group.position.y += 0.08;
+    group.add(spiral);
+    for (let index = 0; index < 7; index += 1) {
+      const mote = mesh(
+        new THREE.OctahedronGeometry(0.08, 0),
+        new THREE.MeshBasicMaterial({
+          color,
+          transparent: true,
+          opacity: 0.72,
+          depthWrite: false,
+        }),
+        false,
+      );
+      const angle = (index / 7) * Math.PI * 2;
+      mote.position.set(Math.cos(angle) * radius * 0.72, 0.15 + (index % 3) * 0.22, Math.sin(angle) * radius * 0.72);
+      group.add(mote);
+    }
+    this.scene.add(group);
+    this.effects.push({
+      object: group,
+      life: duration,
+      maxLife: duration,
+      update: (effect, dt) => {
+        const progress = 1 - effect.life / effect.maxLife;
+        const alpha = 1 - progress;
+        effect.object.rotation.y -= dt * (5.5 + progress * 5);
+        effect.object.scale.setScalar(0.3 + progress * 0.9);
+        effect.object.children.forEach((child) => {
+          if (child.material) child.material.opacity = alpha * 0.72;
+          if (child !== spiral) child.position.y += dt * 1.4;
+        });
+      },
+    });
+  }
+
+  spawnPortalEffect(position, color = 0x5fd9cb, duration = 0.42) {
+    const group = new THREE.Group();
+    group.position.copy(position);
+    group.position.y += 1;
+    for (let index = 0; index < 3; index += 1) {
+      const ring = mesh(
+        new THREE.TorusGeometry(0.65 + index * 0.17, 0.025, 6, 36),
+        new THREE.MeshBasicMaterial({
+          color,
+          transparent: true,
+          opacity: 0.62 - index * 0.1,
+          depthWrite: false,
+          blending: THREE.AdditiveBlending,
+        }),
+        false,
+      );
+      ring.rotation.y = Math.PI / 2;
+      ring.rotation.x = (index - 1) * 0.14;
+      group.add(ring);
+    }
+    this.scene.add(group);
+    this.effects.push({
+      object: group,
+      life: duration,
+      maxLife: duration,
+      update: (effect, dt) => {
+        const progress = 1 - effect.life / effect.maxLife;
+        effect.object.scale.setScalar(0.35 + progress * 1.25);
+        effect.object.rotation.z += dt * 3;
+        effect.object.children.forEach((child, index) => {
+          child.material.opacity = (1 - progress) * (0.62 - index * 0.1);
+        });
+      },
+    });
+  }
+
+  spawnGuardShell(color = 0x72ead5, duration = 2.4) {
+    const group = new THREE.Group();
+    const shell = mesh(
+      new THREE.DodecahedronGeometry(1.02, 1),
+      new THREE.MeshBasicMaterial({
+        color,
+        transparent: true,
+        opacity: 0.24,
+        wireframe: true,
+        depthWrite: false,
+        blending: THREE.AdditiveBlending,
+      }),
+      false,
+    );
+    group.add(shell);
+    for (let index = 0; index < 4; index += 1) {
+      const plate = mesh(
+        new THREE.OctahedronGeometry(0.13, 0),
+        new THREE.MeshBasicMaterial({
+          color,
+          transparent: true,
+          opacity: 0.72,
+          depthWrite: false,
+        }),
+        false,
+      );
+      const angle = (index / 4) * Math.PI * 2;
+      plate.position.set(Math.cos(angle) * 1.12, (index % 2 ? 0.32 : -0.22), Math.sin(angle) * 1.12);
+      group.add(plate);
+    }
+    group.position.copy(this.player.group.position).add(new THREE.Vector3(0, 1.05, 0));
+    this.scene.add(group);
+    this.effects.push({
+      object: group,
+      life: duration,
+      maxLife: duration,
+      update: (effect, dt) => {
+        const alpha = clamp(effect.life / effect.maxLife, 0, 1);
+        effect.object.position.copy(this.player.group.position).add(new THREE.Vector3(0, 1.05, 0));
+        effect.object.rotation.y += dt * 2.4;
+        effect.object.rotation.x = Math.sin(this.elapsed * 2.4) * 0.12;
+        effect.object.children.forEach((child, index) => {
+          child.material.opacity = alpha * (index === 0 ? 0.24 : 0.72);
+          if (index > 0) child.rotation.y += dt * (4 + index);
+        });
+        if (this.player.shield <= 0) effect.life = 0;
+      },
+    });
+  }
+
   spawnBurst(position, count, color, speed) {
     const group = new THREE.Group();
     const particles = [];
@@ -3512,19 +4150,19 @@ class EmberfallGame {
     });
   }
 
-  createMuzzleBurst(position) {
-    this.spawnBurst(position, 4, 0xffa45f, 2.5);
+  createMuzzleBurst(position, color = 0xffa45f, count = 4) {
+    this.spawnBurst(position, count, color, 2.5 + count * 0.08);
   }
 
-  spawnDashTrail(start, end) {
+  spawnDashTrail(start, end, color = 0x5bc8b8, opacity = 0.42) {
     const direction = end.clone().sub(start);
     const distance = direction.length();
     const trail = mesh(
       new THREE.PlaneGeometry(0.8, distance),
       new THREE.MeshBasicMaterial({
-        color: 0x5bc8b8,
+        color,
         transparent: true,
-        opacity: 0.42,
+        opacity,
         side: THREE.DoubleSide,
         depthWrite: false,
       }),
@@ -3540,7 +4178,7 @@ class EmberfallGame {
       life: 0.35,
       maxLife: 0.35,
       update: (effect) => {
-        effect.object.material.opacity = (effect.life / effect.maxLife) * 0.42;
+        effect.object.material.opacity = (effect.life / effect.maxLife) * opacity;
       },
     });
   }
@@ -3872,11 +4510,45 @@ class EmberfallGame {
     ui.currentScore.textContent = formatScore(calculateScore(this.runStats).total);
     ui.potionCount.textContent = String(player.potions);
     ui.runeProgress.textContent = `已激活 ${this.getActiveRuneCount()} 层符文`;
+    const runeSkillMap = {
+      attack: "火矢",
+      nova: "震环",
+      dash: "裂隙步",
+      ward: "结界",
+    };
+    ui.skillButtons.forEach((button) => {
+      const activeRunes = RUNE_LIBRARY.filter(
+        (rune) =>
+          rune.skill === runeSkillMap[button.dataset.skill] &&
+          this.getRuneRank(rune.id) > 0,
+      );
+      const totalRank = activeRunes.reduce(
+        (total, rune) => total + this.getRuneRank(rune.id),
+        0,
+      );
+      let badge = button.querySelector(".rune-rank-badge");
+      if (totalRank > 0 && !badge) {
+        badge = document.createElement("span");
+        badge.className = "rune-rank-badge";
+        button.append(badge);
+      }
+      if (badge) {
+        badge.textContent = String(totalRank);
+        badge.classList.toggle("hidden", totalRank === 0);
+      }
+      button.classList.toggle("runed", totalRank > 0);
+      button.title = activeRunes.length
+        ? activeRunes
+            .map((rune) => `${rune.name} ${this.getRuneRank(rune.id)}级`)
+            .join(" · ")
+        : "";
+    });
 
     const worldPosition = this.getPlayerWorldPosition();
     const region = this.regionStates.get(this.currentRegionKey);
     const coordinates = region ?? getRegionCoordinates(worldPosition.x, worldPosition.y);
-    ui.regionStatus.textContent = `球面坐标 ${coordinates.x} · ${coordinates.z} ｜ 已净化 ${this.regionsCleared}`;
+    const enemyDamageMultiplier = this.getThreatDamageMultiplier(this.wave);
+    ui.regionStatus.textContent = `球面坐标 ${coordinates.x} · ${coordinates.z} ｜ 已净化 ${this.regionsCleared} ｜ 敌伤 ×${enemyDamageMultiplier.toFixed(1)}`;
     const remaining = Math.max(
       0,
       (region?.enemyCount ?? this.waveTotal) - (region?.defeated ?? this.waveDefeated),

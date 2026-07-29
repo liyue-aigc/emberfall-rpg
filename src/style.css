@@ -605,6 +605,31 @@ button:focus-visible {
   transform: translateY(-2px);
 }
 
+.skill-button.runed {
+  border-color: rgba(125, 226, 207, 0.62);
+  background:
+    radial-gradient(circle at 50% 38%, rgba(113, 224, 202, 0.2), transparent 64%),
+    #091a1c;
+  box-shadow: inset 0 0 15px rgba(93, 207, 188, 0.1);
+}
+
+.rune-rank-badge {
+  position: absolute;
+  left: 3px;
+  top: 3px;
+  z-index: 4;
+  min-width: 16px;
+  height: 16px;
+  display: grid;
+  place-items: center;
+  border: 1px solid rgba(151, 255, 235, 0.5);
+  border-radius: 50%;
+  background: rgba(12, 65, 62, 0.92);
+  color: #a7ffed;
+  font: 700 9px var(--utility);
+  box-shadow: 0 0 9px rgba(89, 231, 203, 0.34);
+}
+
 .skill-button.cooling {
   filter: saturate(0.35) brightness(0.72);
 }
