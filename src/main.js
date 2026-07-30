@@ -849,8 +849,8 @@ class EmberfallGame {
   async loadPhase2Assets() {
     const base = import.meta.env.BASE_URL;
     const [heroResult, jackalResult] = await Promise.allSettled([
-      this.phase2Assets.loader.loadAsync(`${base}assets/models/starforge-traveler-v1.glb`),
-      this.phase2Assets.loader.loadAsync(`${base}assets/models/verdigris-lantern-jackal-v1.glb`),
+      this.phase2Assets.loader.loadAsync(`${base}assets/models/starforge-traveler-v3.glb`),
+      this.phase2Assets.loader.loadAsync(`${base}assets/models/verdigris-lantern-jackal-v3.glb`),
     ]);
 
     if (heroResult.status === "fulfilled") {

@@ -8,3 +8,5 @@ server/.vercel/
 server/node_modules/
 server/.env.local
 *.blend1
+__pycache__/
+art/phase2/rejected/

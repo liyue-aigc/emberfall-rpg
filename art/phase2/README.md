@@ -146,3 +146,22 @@ Three.js 运行时已加入四阶卡通明暗材质、骨骼动画状态机和�
 ```powershell
 & 'D:\Program Files\blender.exe' --background --python '.\tools\blender\build_phase2_assets.py'
 ```
+
+## 原画还原版 v3
+
+针对第一版程序化模型与原画差距过大的问题，运行时现已切换到 v3：
+
+- `imgs/*-turnaround-v2.png`：依据已确认概念图生成的正交三视图。
+- `reconstructed/*.glb`：由正面/侧面建模输入重建的连续基础网格。
+- `blender/*-v3.blend`：完成减面、顶点色风格化、骨骼动作和可编辑 Action 的 Blender 源文件。
+- `../../public/assets/models/*-v3.glb`：Three.js 实际加载的运行时资产。
+- `previews/*-v3-*.png`：静止、奔跑、施法与怪物齐射验收图。
+- `previews/emberfall-v3-browser-final.png`：本地 Three.js 实机验收截图。
+
+主角约 `24,000` 三角面，铜绿灯豺约 `22,000` 三角面。单视图重建会把披风、四肢和装甲融合成非流形外壳，因此 v3 对连续主体采用稳定轮廓绑定，避免奔跑或攻击时网格撕裂；法杖、根骨、施法和怪物整体前摇仍按原动作名称播放。后续如果改为人工重拓扑，可直接复用同名 Action 并升级为完整四肢蒙皮。
+
+重新生成 v3 资产：
+
+```powershell
+& 'D:\Program Files\blender.exe' --background --python '.\tools\blender\build_reconstructed_phase2_assets.py'
+```

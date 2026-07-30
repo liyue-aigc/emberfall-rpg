@@ -140,6 +140,117 @@ def torus(name, location, major_radius, minor_radius, mat, armature=None, bone=N
     return finish_mesh(obj, mat, armature, bone, smooth=True)
 
 
+def panel_xz(
+    name,
+    points,
+    y,
+    thickness,
+    mat,
+    armature=None,
+    bone=None,
+    bevel=0.012,
+):
+    """Create an extruded silhouette panel facing the character's front (-Y)."""
+    front_y = y - thickness * 0.5
+    back_y = y + thickness * 0.5
+    vertices = [(x, front_y, z) for x, z in points]
+    vertices += [(x, back_y, z) for x, z in points]
+    count = len(points)
+    faces = [tuple(range(count)), tuple(range(count, count * 2))[::-1]]
+    for index in range(count):
+        next_index = (index + 1) % count
+        faces.append((index, next_index, count + next_index, count + index))
+    mesh_data = bpy.data.meshes.new(f"{name}_Mesh")
+    mesh_data.from_pydata(vertices, [], faces)
+    mesh_data.update()
+    obj = bpy.data.objects.new(name, mesh_data)
+    bpy.context.collection.objects.link(obj)
+    return finish_mesh(
+        obj,
+        mat,
+        armature,
+        bone,
+        bevel=bevel,
+        smooth=False,
+    )
+
+
+def arc_xz(
+    name,
+    center,
+    radius,
+    start_angle,
+    end_angle,
+    segments,
+    thickness,
+    mat,
+    armature=None,
+    bone=None,
+):
+    """Build a broken metal arc from short beveled cylinders."""
+    cx, cy, cz = center
+    points = []
+    for index in range(segments + 1):
+        angle = start_angle + (end_angle - start_angle) * index / segments
+        points.append(
+            (
+                cx + math.cos(angle) * radius,
+                cy,
+                cz + math.sin(angle) * radius,
+            )
+        )
+    objects = []
+    for index in range(segments):
+        objects.append(
+            cylinder_between(
+                f"{name}_{index:02d}",
+                points[index],
+                points[index + 1],
+                thickness,
+                mat,
+                armature,
+                bone,
+                vertices=8,
+            )
+        )
+    return objects
+
+
+def armor_spike(
+    name,
+    base,
+    tip,
+    width,
+    mat,
+    armature=None,
+    bone=None,
+):
+    base = Vector(base)
+    tip = Vector(tip)
+    midpoint = (base + tip) * 0.5
+    direction = tip - base
+    bpy.ops.mesh.primitive_cone_add(
+        vertices=6,
+        radius1=width,
+        radius2=0,
+        depth=direction.length,
+        location=midpoint,
+    )
+    obj = bpy.context.object
+    obj.name = name
+    obj.rotation_mode = "QUATERNION"
+    obj.rotation_quaternion = direction.to_track_quat("Z", "Y")
+    bpy.ops.object.transform_apply(location=False, rotation=False, scale=True)
+    return finish_mesh(
+        obj,
+        mat,
+        armature,
+        bone,
+        bevel=0.008,
+        smooth=False,
+    )
+
+
 def build_armature(name, bone_specs):
     armature_data = bpy.data.armatures.new(f"{name}_ArmatureData")
     armature = bpy.data.objects.new(name, armature_data)
@@ -173,9 +284,16 @@ def clear_pose(armature):
 
 def make_action(armature, name, frame_end, poses, loop=False):
     action = bpy.data.actions.new(name=name)
+    action.use_fake_user = True
     armature.animation_data_create()
     armature.animation_data.action = action
     clear_pose(armature)
+    # Key a complete neutral baseline so switching clips never inherits the
+    # final pose of the previously-authored action (notably Death root tilt).
+    for bone in armature.pose.bones:
+        bone.keyframe_insert(data_path="location", frame=0, group=bone.name)
+        bone.keyframe_insert(data_path="rotation_euler", frame=0, group=bone.name)
+        bone.keyframe_insert(data_path="scale", frame=0, group=bone.name)
     for frame, changes in poses.items():
         for bone_name, channels in changes.items():
             bone = armature.pose.bones.get(bone_name)
@@ -488,6 +606,247 @@ def build_hero():
     torus("StaffInnerRing", (0.64, -0.03, 1.96), 0.18, 0.02, mats["teal"], arm, "staff", rotation=(math.pi / 2, 0, 0))
     ico("StaffGem", (0.64, -0.03, 1.96), (0.12, 0.07, 0.17), mats["ember"], arm, "staff", subdivisions=1, rotation=(0, 0, math.pi / 4))
     cone("StaffTip", (0.64, -0.03, 0.25), 0.07, 0.0, 0.24, mats["copper"], arm, "staff", vertices=6)
+
+    hero_actions(arm)
+    arm.animation_data.action = bpy.data.actions.get("Idle")
+    return arm
+
+
+def build_hero_v2():
+    """Concept-faithful medium-detail version of the Starforge Traveler."""
+    reset_scene()
+    mats = {
+        "skin": material("MAT_Skin", (0.78, 0.53, 0.39), roughness=0.82),
+        "hair": material("MAT_Hair", (0.09, 0.026, 0.022), roughness=0.78),
+        "hair_high": material("MAT_HairHighlight", (0.22, 0.075, 0.055), roughness=0.72),
+        "hair_teal": material("MAT_HairTeal", (0.18, 0.66, 0.65), roughness=0.62),
+        "dark": material("MAT_CharcoalCloth", (0.018, 0.027, 0.035), roughness=0.94),
+        "dark_mid": material("MAT_CloakHighlight", (0.045, 0.065, 0.078), roughness=0.9),
+        "teal": material("MAT_VerdigrisCloth", (0.025, 0.25, 0.25), roughness=0.86),
+        "teal_light": material("MAT_RuneTeal", (0.14, 0.63, 0.62), roughness=0.58),
+        "copper": material("MAT_Copper", (0.5, 0.19, 0.075), metallic=0.72, roughness=0.38),
+        "copper_high": material("MAT_CopperEdge", (0.78, 0.37, 0.16), metallic=0.62, roughness=0.32),
+        "leather": material("MAT_Leather", (0.105, 0.045, 0.024), roughness=0.9),
+        "ivory": material("MAT_IvoryScarf", (0.72, 0.64, 0.53), roughness=0.92),
+        "ember": material(
+            "MAT_Ember",
+            (0.95, 0.21, 0.018),
+            roughness=0.2,
+            emission=(1.0, 0.12, 0.01),
+            emission_strength=6.5,
+        ),
+        "eye": material(
+            "MAT_AmberEye",
+            (1.0, 0.42, 0.045),
+            roughness=0.16,
+            emission=(1.0, 0.22, 0.015),
+            emission_strength=2.2,
+        ),
+    }
+    bones = [
+        ("root", (0, 0, 0.02), (0, 0, 0.2), None),
+        ("hips", (0, 0, 0.82), (0, 0, 1.0), "root"),
+        ("spine", (0, 0, 1.0), (0, 0, 1.46), "hips"),
+        ("head", (0, 0, 1.46), (0, 0, 1.78), "spine"),
+        ("upper_arm.L", (-0.24, 0, 1.39), (-0.5, 0, 1.2), "spine"),
+        ("lower_arm.L", (-0.5, 0, 1.2), (-0.64, -0.02, 0.92), "upper_arm.L"),
+        ("hand.L", (-0.64, -0.02, 0.92), (-0.66, -0.04, 0.8), "lower_arm.L"),
+        ("upper_arm.R", (0.24, 0, 1.39), (0.5, 0, 1.2), "spine"),
+        ("lower_arm.R", (0.5, 0, 1.2), (0.64, -0.02, 0.92), "upper_arm.R"),
+        ("hand.R", (0.64, -0.02, 0.92), (0.66, -0.04, 0.8), "lower_arm.R"),
+        ("staff", (0.66, -0.04, 0.88), (0.69, -0.04, 1.5), "hand.R"),
+        ("upper_leg.L", (-0.16, 0, 0.84), (-0.18, 0, 0.49), "hips"),
+        ("lower_leg.L", (-0.18, 0, 0.49), (-0.18, -0.015, 0.16), "upper_leg.L"),
+        ("foot.L", (-0.18, -0.015, 0.16), (-0.18, -0.18, 0.06), "lower_leg.L"),
+        ("upper_leg.R", (0.16, 0, 0.84), (0.18, 0, 0.49), "hips"),
+        ("lower_leg.R", (0.18, 0, 0.49), (0.18, -0.015, 0.16), "upper_leg.R"),
+        ("foot.R", (0.18, -0.015, 0.16), (0.18, -0.18, 0.06), "lower_leg.R"),
+    ]
+    arm = build_armature("StarforgeTraveler_Rig", bones)
+
+    # Slim anime proportions and layered inner garments.
+    cone("Tunic", (0, 0, 1.04), 0.285, 0.235, 0.62, mats["teal"], arm, "hips", vertices=16)
+    cone("Torso", (0, 0, 1.31), 0.245, 0.205, 0.58, mats["dark"], arm, "spine", vertices=16)
+    panel_xz(
+        "FrontTealPanel",
+        [(-0.18, 1.36), (0.18, 1.36), (0.15, 0.84), (0, 0.72), (-0.16, 0.84)],
+        -0.247,
+        0.022,
+        mats["teal"],
+        arm,
+        "spine",
+        bevel=0.01,
+    )
+    panel_xz(
+        "FrontRuneStripe",
+        [(-0.025, 1.28), (0.025, 1.28), (0.02, 0.86), (0, 0.81), (-0.02, 0.86)],
+        -0.263,
+        0.012,
+        mats["teal_light"],
+        arm,
+        "spine",
+        bevel=0.004,
+    )
+    torus("Belt", (0, 0, 0.94), 0.275, 0.035, mats["leather"], arm, "hips")
+    cube("BeltBuckle", (0, -0.275, 0.94), (0.07, 0.025, 0.055), mats["copper_high"], arm, "hips", bevel=0.014)
+    cylinder_between("ChestStrap_A", (-0.22, -0.225, 1.43), (0.17, -0.255, 1.02), 0.025, mats["leather"], arm, "spine", vertices=6)
+    cylinder_between("ChestStrap_B", (0.18, -0.23, 1.4), (-0.14, -0.255, 1.12), 0.018, mats["copper"], arm, "spine", vertices=6)
+    ico("ChestClasp", (0.01, -0.286, 1.245), (0.06, 0.022, 0.07), mats["copper_high"], arm, "spine", subdivisions=1)
+
+    # Scarf is built as soft overlapping volumes rather than a rectangular block.
+    torus("ScarfCollar", (0, -0.005, 1.49), 0.225, 0.075, mats["ivory"], arm, "spine")
+    panel_xz(
+        "ScarfFront",
+        [(-0.25, 1.53), (0.25, 1.53), (0.18, 1.36), (0.02, 1.31), (-0.18, 1.37)],
+        -0.18,
+        0.045,
+        mats["ivory"],
+        arm,
+        "spine",
+        bevel=0.025,
+    )
+
+    # Face, amber eyes and layered swept hair.
+    uv_sphere("Face", (0, -0.02, 1.68), (0.185, 0.155, 0.225), mats["skin"], arm, "head")
+    ico("HairCap", (0, 0.025, 1.79), (0.215, 0.19, 0.18), mats["hair"], arm, "head", subdivisions=3)
+    hair_locks = [
+        ((-0.17, -0.04, 1.84), (-0.27, -0.04, 1.72), 0.08, "hair"),
+        ((-0.12, -0.11, 1.86), (-0.2, -0.2, 1.69), 0.075, "hair"),
+        ((-0.045, -0.15, 1.86), (-0.08, -0.205, 1.64), 0.07, "hair_teal"),
+        ((0.03, -0.16, 1.86), (0.01, -0.215, 1.68), 0.07, "hair"),
+        ((0.12, -0.12, 1.84), (0.19, -0.195, 1.68), 0.075, "hair"),
+        ((0.18, -0.02, 1.82), (0.27, -0.04, 1.69), 0.08, "hair"),
+        ((0.17, 0.08, 1.8), (0.29, 0.13, 1.7), 0.075, "hair_high"),
+        ((0.1, 0.13, 1.83), (0.18, 0.23, 1.69), 0.075, "hair"),
+        ((0.0, 0.15, 1.83), (-0.02, 0.27, 1.67), 0.08, "hair"),
+        ((-0.11, 0.12, 1.82), (-0.2, 0.22, 1.68), 0.075, "hair_high"),
+        ((-0.18, 0.06, 1.8), (-0.29, 0.11, 1.67), 0.075, "hair"),
+        ((0.02, 0.11, 1.9), (0.08, 0.19, 2.01), 0.065, "hair_high"),
+    ]
+    for index, (base, tip, width, material_key) in enumerate(hair_locks):
+        armor_spike(
+            f"HairLock_{index:02d}",
+            base,
+            tip,
+            width,
+            mats[material_key],
+            arm,
+            "head",
+        )
+    panel_xz("Eye_L", [(-0.135, 1.705), (-0.025, 1.705), (-0.04, 1.67), (-0.125, 1.668)], -0.174, 0.012, mats["eye"], arm, "head", bevel=0.004)
+    panel_xz("Eye_R", [(0.025, 1.705), (0.135, 1.705), (0.125, 1.668), (0.04, 1.67)], -0.174, 0.012, mats["eye"], arm, "head", bevel=0.004)
+    cube("Mouth", (0, -0.177, 1.59), (0.035, 0.007, 0.008), mats["hair"], arm, "head", bevel=0.003)
+    ico("EarringGem", (-0.2, -0.005, 1.6), (0.025, 0.018, 0.055), mats["teal_light"], arm, "head", subdivisions=1)
+
+    # Limbs, gloves and ornate asymmetrical copper armor.
+    for side, sign in (("L", -1), ("R", 1)):
+        upper_bone = f"upper_arm.{side}"
+        lower_bone = f"lower_arm.{side}"
+        hand_bone = f"hand.{side}"
+        cylinder_between(f"UpperArm_{side}", (sign * 0.25, 0, 1.39), (sign * 0.5, 0, 1.2), 0.085, mats["dark_mid"], arm, upper_bone, vertices=12)
+        cylinder_between(f"LowerArm_{side}", (sign * 0.5, 0, 1.2), (sign * 0.64, -0.02, 0.92), 0.075, mats["dark"], arm, lower_bone, vertices=12)
+        ico(f"Glove_{side}", (sign * 0.65, -0.025, 0.86), (0.078, 0.065, 0.115), mats["dark"], arm, hand_bone, subdivisions=2)
+        for finger in range(3):
+            cylinder_between(
+                f"Finger_{side}_{finger}",
+                (sign * (0.66 + finger * 0.006), -0.07 - finger * 0.012, 0.84 - finger * 0.012),
+                (sign * (0.665 + finger * 0.006), -0.08 - finger * 0.012, 0.78 - finger * 0.01),
+                0.012,
+                mats["skin"],
+                arm,
+                hand_bone,
+                vertices=6,
+            )
+        cube(f"Bracer_{side}", (sign * 0.57, -0.015, 1.055), (0.115, 0.085, 0.17), mats["copper"], arm, lower_bone, rotation=(0.16, 0, sign * 0.18), bevel=0.035)
+        panel_xz(
+            f"BracerRune_{side}",
+            [
+                (sign * 0.62, 1.14),
+                (sign * 0.52, 1.12),
+                (sign * 0.545, 1.0),
+                (sign * 0.61, 0.98),
+            ],
+            -0.112,
+            0.014,
+            mats["teal_light"],
+            arm,
+            lower_bone,
+            bevel=0.004,
+        )
+    ico("ShoulderCore_L", (-0.3, 0.015, 1.43), (0.22, 0.16, 0.13), mats["copper"], arm, "upper_arm.L", subdivisions=2)
+    torus("ShoulderRing_L", (-0.31, -0.035, 1.44), 0.16, 0.028, mats["copper_high"], arm, "upper_arm.L", rotation=(math.pi / 2, 0, 0))
+    ico("ShoulderRune_L", (-0.31, -0.178, 1.44), (0.065, 0.025, 0.065), mats["teal_light"], arm, "upper_arm.L", subdivisions=1)
+    armor_spike("ShoulderBladeTop", (-0.35, 0.01, 1.52), (-0.5, 0.0, 1.62), 0.07, mats["copper_high"], arm, "upper_arm.L")
+    armor_spike("ShoulderBladeSide", (-0.36, 0.0, 1.4), (-0.55, -0.02, 1.34), 0.065, mats["copper"], arm, "upper_arm.L")
+
+    # Baggy trousers and layered travel boots.
+    for side, sign in (("L", -1), ("R", 1)):
+        upper_bone = f"upper_leg.{side}"
+        lower_bone = f"lower_leg.{side}"
+        foot_bone = f"foot.{side}"
+        cone(f"Trouser_{side}", (sign * 0.17, 0, 0.66), 0.14, 0.115, 0.42, mats["dark_mid"], arm, upper_bone, vertices=14)
+        cylinder_between(f"ShinWrap_{side}", (sign * 0.18, 0, 0.49), (sign * 0.18, -0.015, 0.17), 0.09, mats["dark"], arm, lower_bone, vertices=12)
+        cube(f"Boot_{side}", (sign * 0.18, -0.105, 0.115), (0.14, 0.225, 0.115), mats["leather"], arm, foot_bone, bevel=0.045)
+        cube(f"BootSole_{side}", (sign * 0.18, -0.125, 0.035), (0.15, 0.24, 0.035), mats["dark"], arm, foot_bone, bevel=0.02)
+        cube(f"BootCap_{side}", (sign * 0.18, -0.265, 0.13), (0.145, 0.08, 0.075), mats["copper"], arm, foot_bone, bevel=0.025)
+        cylinder_between(f"BootStrap_{side}", (sign * 0.07, -0.17, 0.22), (sign * 0.29, -0.17, 0.22), 0.025, mats["copper_high"], arm, foot_bone, vertices=6)
+
+    # The concept's long asymmetric torn cloak, layered back and teal lining.
+    panel_xz(
+        "CloakInner",
+        [(-0.39, 1.49), (0.39, 1.49), (0.48, 1.18), (0.44, 0.32), (0.24, 0.52), (0.06, 0.21), (-0.13, 0.47), (-0.36, 0.26), (-0.48, 1.15)],
+        0.185,
+        0.035,
+        mats["teal"],
+        arm,
+        "spine",
+        bevel=0.018,
+    )
+    panel_xz(
+        "CloakOuter",
+        [(-0.4, 1.5), (0.4, 1.5), (0.52, 1.23), (0.5, 0.5), (0.34, 0.65), (0.18, 0.28), (0.02, 0.52), (-0.16, 0.18), (-0.31, 0.55), (-0.5, 0.37), (-0.53, 1.2)],
+        0.15,
+        0.045,
+        mats["dark"],
+        arm,
+        "spine",
+        bevel=0.018,
+    )
+    for index, (points, material_key, y) in enumerate(
+        [
+            ([(-0.45, 1.19), (-0.2, 1.25), (-0.25, 0.36), (-0.39, 0.22), (-0.52, 0.48)], "dark_mid", 0.12),
+            ([(0.12, 1.2), (0.46, 1.16), (0.49, 0.44), (0.32, 0.23), (0.18, 0.52)], "dark_mid", 0.12),
+            ([(-0.25, 1.0), (-0.03, 0.96), (-0.07, 0.36), (-0.2, 0.2), (-0.3, 0.48)], "teal", 0.1),
+        ]
+    ):
+        panel_xz(f"CloakLayer_{index}", points, y, 0.026, mats[material_key], arm, "hips", bevel=0.012)
+    # Copper trim and back rune device.
+    cylinder_between("CloakTrim_L", (-0.48, 0.105, 1.35), (-0.49, 0.105, 0.43), 0.012, mats["copper_high"], arm, "spine", vertices=6)
+    cylinder_between("CloakTrim_R", (0.46, 0.105, 1.33), (0.43, 0.105, 0.48), 0.012, mats["copper_high"], arm, "spine", vertices=6)
+    torus("BackRuneDevice", (0, 0.205, 1.25), 0.175, 0.035, mats["copper"], arm, "spine", rotation=(math.pi / 2, 0, 0))
+    torus("BackRuneInner", (0, 0.213, 1.25), 0.105, 0.018, mats["copper_high"], arm, "spine", rotation=(math.pi / 2, 0, 0))
+    ico("BackRuneCore", (0, 0.232, 1.25), (0.06, 0.025, 0.095), mats["teal_light"], arm, "spine", subdivisions=1)
+    cube("Satchel", (0.38, 0.17, 0.83), (0.18, 0.09, 0.21), mats["leather"], arm, "hips", rotation=(0, 0.05, -0.08), bevel=0.05)
+    cube("SatchelFlap", (0.38, 0.068, 0.88), (0.17, 0.018, 0.08), mats["copper"], arm, "hips", bevel=0.018)
+
+    # Broken crescent-ring focus staff with floating ember crystal.
+    cylinder_between("StaffShaft", (0.69, -0.04, 0.24), (0.69, -0.04, 1.72), 0.032, mats["dark"], arm, "staff", vertices=10)
+    cylinder_between("StaffGrip", (0.69, -0.04, 0.78), (0.69, -0.04, 1.18), 0.046, mats["teal"], arm, "staff", vertices=8)
+    for wrap_index in range(5):
+        torus(
+            f"StaffGripWrap_{wrap_index}",
+            (0.69, -0.04, 0.84 + wrap_index * 0.075),
+            0.047,
+            0.006,
+            mats["copper_high"],
+            arm,
+            "staff",
+        )
+    arc_xz("StaffCrescentOuter", (0.69, -0.04, 1.94), 0.29, -0.25, math.pi * 1.72, 13, 0.034, mats["copper"], arm, "staff")
+    arc_xz("StaffCrescentInner", (0.69, -0.04, 1.94), 0.21, 0.28, math.pi * 1.5, 9, 0.02, mats["teal"], arm, "staff")
+    ico("StaffGem", (0.69, -0.04, 1.94), (0.105, 0.065, 0.165), mats["ember"], arm, "staff", subdivisions=2, rotation=(0, 0, math.pi / 4))
+    armor_spike("StaffCrown", (0.69, -0.04, 1.7), (0.69, -0.04, 1.83), 0.085, mats["copper_high"], arm, "staff")
+    armor_spike("StaffTip", (0.69, -0.04, 0.28), (0.69, -0.04, 0.08), 0.075, mats["copper_high"], arm, "staff")
 
     hero_actions(arm)
     arm.animation_data.action = bpy.data.actions.get("Idle")
@@ -809,6 +1168,319 @@ def build_monster():
     return arm
 
 
+def build_monster_v2():
+    """Concept-faithful medium-detail version of the Verdigris Lantern Jackal."""
+    reset_scene()
+    mats = {
+        "stone": material("MAT_ObsidianMineral", (0.012, 0.018, 0.025), roughness=0.96),
+        "stone_high": material("MAT_MineralEdge", (0.05, 0.07, 0.085), roughness=0.9),
+        "teal": material("MAT_VerdigrisArmor", (0.035, 0.31, 0.275), metallic=0.46, roughness=0.58),
+        "teal_high": material("MAT_VerdigrisEdge", (0.11, 0.48, 0.4), metallic=0.38, roughness=0.48),
+        "copper": material("MAT_Copper", (0.48, 0.18, 0.06), metallic=0.76, roughness=0.38),
+        "copper_high": material("MAT_CopperEdge", (0.76, 0.38, 0.12), metallic=0.68, roughness=0.3),
+        "violet": material(
+            "MAT_ArcaneViolet",
+            (0.34, 0.075, 0.82),
+            roughness=0.16,
+            emission=(0.48, 0.045, 1.0),
+            emission_strength=7.0,
+        ),
+        "violet_soft": material(
+            "MAT_ArcaneSeam",
+            (0.18, 0.035, 0.5),
+            roughness=0.26,
+            emission=(0.3, 0.03, 0.82),
+            emission_strength=3.2,
+        ),
+        "orange": material(
+            "MAT_WarningOrange",
+            (0.95, 0.16, 0.015),
+            roughness=0.18,
+            emission=(1.0, 0.08, 0.005),
+            emission_strength=4.2,
+        ),
+    }
+    bones = [
+        ("root", (0, 0, 0.1), (0, 0, 0.3), None),
+        ("spine", (0, 0.12, 0.78), (0, -0.25, 0.9), "root"),
+        ("neck", (0, -0.33, 0.9), (0, -0.58, 1.08), "spine"),
+        ("head", (0, -0.58, 1.08), (0, -0.88, 1.19), "neck"),
+        ("ear.L", (-0.13, -0.62, 1.23), (-0.2, -0.54, 1.78), "head"),
+        ("ear.R", (0.13, -0.62, 1.23), (0.2, -0.54, 1.78), "head"),
+        ("upper_leg.FL", (-0.26, -0.34, 0.72), (-0.3, -0.38, 0.38), "spine"),
+        ("lower_leg.FL", (-0.3, -0.38, 0.38), (-0.31, -0.48, 0.08), "upper_leg.FL"),
+        ("upper_leg.FR", (0.26, -0.34, 0.72), (0.3, -0.38, 0.38), "spine"),
+        ("lower_leg.FR", (0.3, -0.38, 0.38), (0.31, -0.48, 0.08), "upper_leg.FR"),
+        ("upper_leg.BL", (-0.28, 0.38, 0.73), (-0.32, 0.44, 0.4), "spine"),
+        ("lower_leg.BL", (-0.32, 0.44, 0.4), (-0.33, 0.34, 0.08), "upper_leg.BL"),
+        ("upper_leg.BR", (0.28, 0.38, 0.73), (0.32, 0.44, 0.4), "spine"),
+        ("lower_leg.BR", (0.32, 0.44, 0.4), (0.33, 0.34, 0.08), "upper_leg.BR"),
+        ("tail.1", (0, 0.58, 0.78), (0, 0.88, 0.96), "spine"),
+        ("tail.2", (0, 0.88, 0.96), (0, 1.13, 1.22), "tail.1"),
+        ("tail.3", (0, 1.13, 1.22), (0, 1.25, 1.48), "tail.2"),
+        ("launcher.L", (-0.35, -0.08, 0.98), (-0.43, -0.28, 1.04), "spine"),
+        ("launcher.R", (0.35, -0.08, 0.98), (0.43, -0.28, 1.04), "spine"),
+    ]
+    arm = build_armature("VerdigrisLanternJackal_Rig", bones)
+
+    # Obsidian articulated core and overlapping oxidized-copper dorsal plates.
+    ico("MineralBody", (0, 0.1, 0.81), (0.36, 0.66, 0.32), mats["stone"], arm, "spine", subdivisions=3)
+    for index, (y, z, sx, sy, rotation_x) in enumerate(
+        [
+            (0.38, 1.0, 0.31, 0.22, -0.08),
+            (0.08, 1.05, 0.35, 0.24, 0.01),
+            (-0.22, 1.0, 0.33, 0.22, 0.1),
+        ]
+    ):
+        cube(
+            f"BackArmor_{index}",
+            (0, y, z),
+            (sx, sy, 0.105),
+            mats["teal"],
+            arm,
+            "spine",
+            rotation=(rotation_x, 0, 0),
+            bevel=0.055,
+        )
+        cube(
+            f"BackArmorRidge_{index}",
+            (0, y - 0.012, z + 0.105),
+            (0.025, sy * 0.82, 0.025),
+            mats["copper_high"],
+            arm,
+            "spine",
+            rotation=(rotation_x, 0, 0),
+            bevel=0.008,
+        )
+    cube("ChestArmor", (0, -0.37, 0.88), (0.3, 0.22, 0.25), mats["teal"], arm, "neck", rotation=(-0.2, 0, 0), bevel=0.065)
+    panel_xz(
+        "ChestChevron",
+        [(-0.28, 1.0), (0, 0.84), (0.28, 1.0), (0.2, 0.76), (0, 0.66), (-0.2, 0.76)],
+        -0.59,
+        0.03,
+        mats["copper_high"],
+        arm,
+        "neck",
+        bevel=0.012,
+    )
+    for index, (y, z, scale) in enumerate(
+        [(-0.44, 1.02, 0.24), (-0.54, 1.1, 0.215), (-0.63, 1.16, 0.19)]
+    ):
+        ico(
+            f"NeckSegment_{index}",
+            (0, y, z),
+            (scale, 0.15, 0.11),
+            mats["stone_high" if index % 2 else "stone"],
+            arm,
+            "neck",
+            subdivisions=1,
+        )
+        cube(
+            f"NeckArmor_{index}",
+            (0, y - 0.07, z + 0.055),
+            (scale * 0.86, 0.055, 0.07),
+            mats["teal"],
+            arm,
+            "neck",
+            rotation=(0.12, 0, 0),
+            bevel=0.03,
+        )
+    cylinder_between("SpineSeam", (0, 0.47, 1.12), (0, -0.24, 1.14), 0.018, mats["violet_soft"], arm, "spine", vertices=6)
+
+    # Narrow jackal mask, layered cheek blades and luminous eyes.
+    ico("HeadCore", (0, -0.76, 1.2), (0.22, 0.34, 0.23), mats["stone"], arm, "head", subdivisions=2)
+    cone("SnoutCore", (0, -1.04, 1.13), 0.135, 0.045, 0.45, mats["stone_high"], arm, "head", vertices=8, rotation=(math.pi / 2, 0, 0))
+    panel_xz(
+        "FaceMask",
+        [(-0.2, 1.35), (0, 1.43), (0.2, 1.35), (0.145, 1.1), (0, 1.02), (-0.145, 1.1)],
+        -0.99,
+        0.055,
+        mats["teal"],
+        arm,
+        "head",
+        bevel=0.025,
+    )
+    panel_xz(
+        "FaceCopperTrim",
+        [(-0.175, 1.34), (0, 1.405), (0.175, 1.34), (0.02, 1.31), (0, 1.34), (-0.02, 1.31)],
+        -1.025,
+        0.018,
+        mats["copper_high"],
+        arm,
+        "head",
+        bevel=0.006,
+    )
+    for side, sign in (("L", -1), ("R", 1)):
+        panel_xz(
+            f"Eye_{side}",
+            [
+                (sign * 0.155, 1.31),
+                (sign * 0.045, 1.29),
+                (sign * 0.065, 1.245),
+                (sign * 0.17, 1.27),
+            ],
+            -1.035,
+            0.014,
+            mats["violet"],
+            arm,
+            "head",
+            bevel=0.004,
+        )
+        armor_spike(
+            f"CheekBlade_{side}",
+            (sign * 0.16, -0.83, 1.25),
+            (sign * 0.33, -0.78, 1.18),
+            0.06,
+            mats["teal_high"],
+            arm,
+            "head",
+        )
+        armor_spike(
+            f"JawBlade_{side}",
+            (sign * 0.12, -0.98, 1.12),
+            (sign * 0.23, -0.92, 1.03),
+            0.045,
+            mats["copper"],
+            arm,
+            "head",
+        )
+    ico("ForeheadCore", (0, -1.035, 1.39), (0.065, 0.026, 0.07), mats["violet"], arm, "head", subdivisions=2)
+    cube("NosePlate", (0, -1.255, 1.1), (0.07, 0.055, 0.06), mats["copper_high"], arm, "head", bevel=0.02)
+
+    # Three-piece ears reproduce the reference's long segmented silhouette.
+    for side, sign in (("L", -1), ("R", 1)):
+        ear_bone = f"ear.{side}"
+        ear_panels = [
+            (1.24, 1.43, 0.12, 0.19),
+            (1.43, 1.63, 0.105, 0.16),
+            (1.62, 1.82, 0.09, 0.11),
+        ]
+        for index, (bottom, top, half_width, offset) in enumerate(ear_panels):
+            center_x = sign * (0.14 + index * 0.025)
+            points = [
+                (center_x - half_width, bottom),
+                (center_x + half_width, bottom + 0.025),
+                (center_x + sign * offset * 0.35, top - 0.025),
+                (center_x, top),
+                (center_x - sign * offset * 0.35, top - 0.025),
+            ]
+            panel_xz(
+                f"EarPlate_{side}_{index}",
+                points,
+                -0.61 + index * 0.008,
+                0.065,
+                mats["teal" if index != 1 else "teal_high"],
+                arm,
+                ear_bone,
+                bevel=0.018,
+            )
+            cylinder_between(
+                f"EarTrim_{side}_{index}",
+                (center_x, -0.65, bottom + 0.035),
+                (center_x, -0.65, top - 0.035),
+                0.014,
+                mats["copper_high"],
+                arm,
+                ear_bone,
+                vertices=6,
+            )
+        panel_xz(
+            f"EarInset_{side}",
+            [
+                (sign * 0.12, 1.29),
+                (sign * 0.17, 1.7),
+                (sign * 0.2, 1.76),
+                (sign * 0.19, 1.34),
+            ],
+            -0.648,
+            0.012,
+            mats["stone"],
+            arm,
+            ear_bone,
+            bevel=0.004,
+        )
+
+    # Articulated legs with joint discs, layered shin armor and individual claws.
+    leg_data = [
+        ("FL", -1, (-0.27, -0.33, 0.75), (-0.3, -0.4, 0.38), (-0.31, -0.49, 0.08)),
+        ("FR", 1, (0.27, -0.33, 0.75), (0.3, -0.4, 0.38), (0.31, -0.49, 0.08)),
+        ("BL", -1, (-0.29, 0.36, 0.75), (-0.32, 0.43, 0.4), (-0.33, 0.34, 0.08)),
+        ("BR", 1, (0.29, 0.36, 0.75), (0.32, 0.43, 0.4), (0.33, 0.34, 0.08)),
+    ]
+    for label, sign, upper_start, knee, paw in leg_data:
+        upper_bone = f"upper_leg.{label}"
+        lower_bone = f"lower_leg.{label}"
+        cylinder_between(f"UpperLeg_{label}", upper_start, knee, 0.095, mats["stone"], arm, upper_bone, vertices=9)
+        cylinder_between(f"LowerLeg_{label}", knee, paw, 0.074, mats["stone_high"], arm, lower_bone, vertices=9)
+        ico(f"Joint_{label}", knee, (0.115, 0.105, 0.11), mats["copper"], arm, upper_bone, subdivisions=1)
+        cube(f"ThighArmor_{label}", upper_start, (0.14, 0.16, 0.19), mats["teal"], arm, upper_bone, rotation=(0.05, 0, sign * 0.08), bevel=0.045)
+        cube(f"ShinArmor_{label}", ((knee[0] + paw[0]) * 0.5, (knee[1] + paw[1]) * 0.5 - 0.035, (knee[2] + paw[2]) * 0.5), (0.105, 0.085, 0.17), mats["teal_high"], arm, lower_bone, rotation=(0.05, 0, sign * 0.035), bevel=0.035)
+        cube(f"Paw_{label}", (paw[0], paw[1] - 0.085, 0.075), (0.14, 0.2, 0.075), mats["stone"], arm, lower_bone, bevel=0.035)
+        cylinder_between(
+            f"ShinTrim_{label}",
+            (paw[0] - sign * 0.075, paw[1] - 0.13, 0.2),
+            (paw[0] + sign * 0.075, paw[1] - 0.13, 0.2),
+            0.018,
+            mats["copper_high"],
+            arm,
+            lower_bone,
+            vertices=6,
+        )
+        for claw_index in (-1, 0, 1):
+            armor_spike(
+                f"Claw_{label}_{claw_index}",
+                (paw[0] + claw_index * 0.07, paw[1] - 0.19, 0.085),
+                (paw[0] + claw_index * 0.075, paw[1] - 0.34, 0.07),
+                0.033,
+                mats["copper_high"],
+                arm,
+                lower_bone,
+            )
+
+    # Large circular shoulder emitters with separated armor petals.
+    for side, x in (("L", -0.43), ("R", 0.43)):
+        launcher_bone = f"launcher.{side}"
+        torus(f"LauncherOuter_{side}", (x, -0.12, 1.03), 0.175, 0.035, mats["copper_high"], arm, launcher_bone, rotation=(math.pi / 2, 0, 0))
+        torus(f"LauncherInner_{side}", (x, -0.135, 1.03), 0.115, 0.024, mats["stone"], arm, launcher_bone, rotation=(math.pi / 2, 0, 0))
+        ico(f"LauncherCore_{side}", (x, -0.18, 1.03), (0.105, 0.055, 0.105), mats["violet"], arm, launcher_bone, subdivisions=2)
+        for fin in range(4):
+            angle = fin * math.pi * 0.5
+            px = x + math.cos(angle) * 0.205
+            pz = 1.03 + math.sin(angle) * 0.205
+            cube(
+                f"LauncherPetal_{side}_{fin}",
+                (px, -0.105, pz),
+                (0.055, 0.045, 0.1),
+                mats["teal"],
+                arm,
+                launcher_bone,
+                rotation=(0, angle, angle),
+                bevel=0.025,
+            )
+
+    # Segmented rising tail and faceted lantern crystal.
+    tail_segments = [
+        ("TailBase", (0, 0.54, 0.8), (0, 0.84, 0.95), 0.11, "stone", "tail.1"),
+        ("TailMidA", (0, 0.84, 0.95), (0, 1.05, 1.15), 0.1, "teal", "tail.2"),
+        ("TailMidB", (0, 1.05, 1.15), (0, 1.18, 1.36), 0.085, "teal_high", "tail.3"),
+    ]
+    for name, start, end, radius, material_key, bone in tail_segments:
+        cylinder_between(name, start, end, radius, mats[material_key], arm, bone, vertices=9)
+        torus(f"{name}Joint", start, radius * 1.05, radius * 0.18, mats["copper"], arm, bone)
+    ico("TailCrystal", (0, 1.22, 1.5), (0.18, 0.15, 0.27), mats["violet"], arm, "tail.3", subdivisions=2)
+    for index, angle in enumerate((0, math.pi * 0.5, math.pi, math.pi * 1.5)):
+        start = (math.cos(angle) * 0.18, 1.22 + math.sin(angle) * 0.03, 1.32)
+        tip = (math.cos(angle) * 0.13, 1.22 + math.sin(angle) * 0.03, 1.68)
+        armor_spike(f"TailCage_{index}", start, tip, 0.05, mats["teal"], arm, "tail.3")
+    torus("TailLanternRing", (0, 1.22, 1.5), 0.235, 0.025, mats["copper_high"], arm, "tail.3", rotation=(math.pi / 2, 0, 0))
+    cube("WarningPlate_L", (-0.34, 0.25, 0.92), (0.075, 0.028, 0.105), mats["orange"], arm, "spine", bevel=0.022)
+    cube("WarningPlate_R", (0.34, 0.25, 0.92), (0.075, 0.028, 0.105), mats["orange"], arm, "spine", bevel=0.022)
+
+    monster_actions(arm)
+    arm.animation_data.action = bpy.data.actions.get("Idle")
+    return arm
+
+
 def add_preview_environment(target=(0, 0, 0.8), camera_location=(3.6, -6.4, 2.8)):
     scene = bpy.context.scene
     scene.render.engine = "BLENDER_EEVEE"
@@ -905,21 +1577,21 @@ def export_asset(asset_name, armature, blend_name, preview_name, camera_location
 
 
 def main():
-    hero = build_hero()
+    hero = build_hero_v2()
     export_asset(
-        "starforge-traveler-v1",
+        "starforge-traveler-v2",
         hero,
-        "starforge-traveler-v1.blend",
-        "starforge-traveler-blender-v1.png",
-        (3.4, -6.0, 2.55),
+        "starforge-traveler-v2.blend",
+        "starforge-traveler-blender-v2.png",
+        (3.1, -6.4, 2.65),
     )
-    monster = build_monster()
+    monster = build_monster_v2()
     export_asset(
-        "verdigris-lantern-jackal-v1",
+        "verdigris-lantern-jackal-v2",
         monster,
-        "verdigris-lantern-jackal-v1.blend",
-        "verdigris-lantern-jackal-blender-v1.png",
-        (3.4, -6.0, 2.5),
+        "verdigris-lantern-jackal-v2.blend",
+        "verdigris-lantern-jackal-blender-v2.png",
+        (3.2, -6.4, 2.55),
     )
 
 

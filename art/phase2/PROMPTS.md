@@ -35,3 +35,31 @@ Materials/textures: brushed oxidized copper, fractured stone, translucent crysta
 Constraints: fully original IP; model-friendly modular armor pieces; readable projectile source; no logos, no text, no watermark, no environment, no humanoid clothing
 Avoid: copying or closely resembling monsters, machines, mascots, motifs, or silhouettes from Genshin Impact or any other existing franchise; realistic animal anatomy; excessive tiny details; photorealism; cute pet proportions; gore; wings
 ```
+
+## 原画还原版建模三视图
+
+生成方式：Codex 内置图像生成工具，以已经确认的两张原创概念图作为身份参考。
+
+### 星炉旅者
+
+```text
+Use case: stylized-concept
+Asset type: production-ready Blender character turnaround/model sheet
+Input image: the provided image is the approved original character design and identity reference.
+Primary request: redraw the exact same original character “星炉旅者 / Starforge Traveler” as a clean orthographic modeling turnaround with three full-body views: exact front, exact left side, exact back. Use a relaxed A-pose with both arms separated from the torso and hands visible. Keep identical face, dark tousled hair with teal forelock, proportions, asymmetrical black cloak, teal inner garments, cream scarf, copper shoulder armor and bracers, boots, belts, pouches, runic trim, colors and materials from the reference. Place the crescent-ring staff separately on the far right in exact front and side orthographic views.
+Style/medium: precise high-end anime game character design sheet, crisp controlled linework, flat neutral studio lighting, readable material boundaries, minimal painterly shadows.
+Composition: all views share exactly the same scale, eye height and ground line; generous spacing; unobstructed silhouettes; neutral warm-gray background.
+Constraints: preserve the approved identity and costume architecture; no redesign, no alternate outfit, no extra accessories, no perspective or three-quarter view, no action pose, no text, no labels, no watermark. Make symmetry and construction seams clear enough for 3D modeling.
+```
+
+### 铜绿灯豺
+
+```text
+Use case: stylized-concept
+Asset type: production-ready Blender creature turnaround/model sheet
+Input image: the provided image is the approved original creature design and identity reference.
+Primary request: redraw the exact same original quadruped construct “铜绿灯豺 / Verdigris Lantern Jackal” as a clean orthographic modeling turnaround with three complete views: exact front, exact left side, exact back. Keep identical jackal proportions, long segmented ears, narrow armored head, black articulated neck and legs, layered oxidized-copper armor plates, bronze trim, circular shoulder emitter, purple crystal energy, armored paws and segmented tail with crystal lantern. Use a neutral standing pose with all four legs clearly separated and tail positioned so its construction is visible.
+Style/medium: precise high-end anime game creature design sheet, crisp controlled linework, flat neutral studio lighting, readable hard-surface panel boundaries, minimal painterly shadows.
+Composition: all views share exactly the same scale, shoulder height and ground line; generous spacing; unobstructed silhouette; show the detachable shoulder energy orb separately at the far right in front and side views; neutral warm-gray background.
+Constraints: preserve the approved identity, silhouette, armor architecture, colors and materials; no redesign, no biological fur, no alternate weapon, no perspective or three-quarter view, no action pose, no text, no labels, no watermark. Make armor seams and mechanical joints clear enough for 3D modeling.
+```
