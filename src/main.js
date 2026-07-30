@@ -378,6 +378,7 @@ class EmberfallGame {
       running: false,
       action: null,
       aimDirection: new THREE.Vector3(0, 0, -1),
+      velocity: new THREE.Vector3(),
     };
 
     this.floatLayer = document.createElement("div");
@@ -1068,6 +1069,7 @@ class EmberfallGame {
       running: false,
       action: null,
     });
+    this.player.velocity.set(0, 0, 0);
     this.runeRanks = {};
     this.pendingRuneDrafts = 0;
   }
@@ -1131,6 +1133,8 @@ class EmberfallGame {
   applyRegionEventToEnemy(enemy, region, makeElite = false) {
     if (!enemy || !region.event) return;
     if (region.event.id === "rush") {
+      enemy.eventSpeedMultiplier *= 1.18;
+      enemy.eventDamageMultiplier *= 1.08;
       enemy.speed *= 1.18;
       enemy.damage = Math.round(enemy.damage * 1.08);
     }
@@ -1140,6 +1144,8 @@ class EmberfallGame {
     }
     if (region.event.id === "elite" && makeElite) {
       enemy.elite = true;
+      enemy.eventSpeedMultiplier *= 1.08;
+      enemy.eventDamageMultiplier *= 1.5;
       enemy.name = `悬赏 · ${enemy.name}`;
       enemy.maxHp = Math.round(enemy.maxHp * 2.35);
       enemy.hp = enemy.maxHp;
@@ -1237,7 +1243,17 @@ class EmberfallGame {
     region.hasBoss = region.threat >= 2 && bossCycle % 2 === 1;
     const eventBonus =
       region.event?.id === "rush" ? 2 : region.event?.id === "volatile" ? 1 : region.event?.id === "elite" ? 1 : 0;
-    const count = Math.min(14, 5 + Math.floor(region.threat * 0.7) + (region.hasBoss ? 1 : 0) + eventBonus);
+    const levelReinforcements = Math.floor(
+      Math.max(0, this.player.level - 8) / 8,
+    );
+    const count = Math.min(
+      20,
+      5 +
+        Math.floor(region.threat * 0.72) +
+        levelReinforcements +
+        (region.hasBoss ? 1 : 0) +
+        eventBonus,
+    );
     region.enemyCount = count;
     if (region.event?.id === "rush") region.eventTimeLeft = 45;
     this.waveActive = true;
@@ -1249,7 +1265,10 @@ class EmberfallGame {
     let eliteApplied = false;
     const rangedLimit = Math.min(
       count - 1,
-      2 + Math.floor(Math.max(0, region.threat - 1) * 0.65),
+      Math.ceil(count * 0.64),
+      2 +
+        Math.floor(Math.max(0, region.threat - 1) * 0.72) +
+        Math.floor(Math.max(0, this.player.level - 10) / 10),
     );
     for (let i = 0; i < count; i += 1) {
       let type = region.hasBoss && i === 0 ? "boss" : this.chooseEnemyType(region);
@@ -1615,24 +1634,31 @@ class EmberfallGame {
     const base = presets[type];
     const threat = Math.max(1, options.threat ?? this.wave);
     const threatStep = Math.max(0, threat - 1);
-    const healthScale =
-      1 +
-      threatStep * (type === "boss" ? 0.34 : 0.25) +
-      Math.pow(threatStep, 1.18) * (type === "boss" ? 0.045 : 0.032);
+    const healthScale = this.getEnemyHealthScale(
+      threat,
+      type === "boss",
+    );
     const damageScale = this.getThreatDamageMultiplier(threat, type === "boss");
-    const attackRate = Math.min(
-      1.82,
-      1 +
-        threatStep * 0.052 +
-        Math.pow(threatStep, 1.15) * 0.014 +
-        this.getActiveRuneCount() * 0.009,
+    const attackRate = this.getEnemyAttackRate(threat);
+    const defensePenetration = this.getEnemyDefensePenetration(threat);
+    const movementScale = this.getEnemyMovementMultiplier(
+      threat,
+      type === "boss",
     );
-    const defensePenetration = Math.min(
-      0.62,
-      threatStep * 0.045 +
-        Math.pow(threatStep, 1.1) * 0.012 +
-        this.getActiveRuneCount() * 0.008,
+    const projectileSpeedScale =
+      this.getEnemyProjectileSpeedMultiplier(threat);
+    const rangeBonus = base.ranged
+      ? Math.min(3.5, threatStep * 0.08 + Math.max(0, this.player.level - 1) * 0.075)
+      : 0;
+    const adaptiveDamage = this.getAdaptiveEnemyDamage(
+      base.damage,
+      threat,
+      type === "boss",
+      base.damageType,
+      defensePenetration,
     );
+    const aggressionPressure =
+      threat * 0.06 + Math.max(0, this.player.level - 1) * 0.04;
     const enemy = {
       type,
       name: base.name,
@@ -1641,10 +1667,12 @@ class EmberfallGame {
       hitbox: null,
       hp: Math.round(base.hp * healthScale),
       maxHp: Math.round(base.hp * healthScale),
-      speed: base.speed,
-      damage: Math.round(base.damage * damageScale),
-      range: base.range,
-      preferredRange: base.preferredRange ?? base.range,
+      baseDamage: base.damage,
+      baseSpeed: base.speed,
+      speed: base.speed * movementScale,
+      damage: adaptiveDamage,
+      range: base.range + rangeBonus,
+      preferredRange: (base.preferredRange ?? base.range) + rangeBonus * 0.72,
       xp: Math.round(base.xp * healthScale),
       radius: base.radius,
       armor: Math.round(base.armor * (1 + Math.max(0, threat - 1) * 0.12)),
@@ -1654,19 +1682,26 @@ class EmberfallGame {
       damageScale,
       attackRate,
       defensePenetration,
-      projectileSpeedScale: Math.min(1.65, 1 + threatStep * 0.045),
+      movementScale,
+      projectileSpeedScale,
+      volleySize: this.getEnemyVolleySize(type, threat),
+      eventDamageMultiplier: 1,
+      eventSpeedMultiplier: 1,
       threat,
       regionKey: options.regionKey ?? this.currentRegionKey,
       biome: options.biome,
-      attackCooldown: base.ranged ? rand(1.35, 2.45) : rand(0.35, 0.95),
+      attackCooldown:
+        (base.ranged ? rand(0.7, 1.7) : rand(0.3, 0.9)) /
+          attackRate +
+        rand(0, base.ranged ? 0.55 : 0.35),
       specialCooldown: type === "boss" ? 2.8 / attackRate : Infinity,
       specialIndex: 0,
       aggroDelay:
         type === "boss"
-          ? rand(1.1, 1.8)
+          ? rand(0.65, 1.15) / movementScale
           : rand(
-              Math.max(0.8, 2.25 - threat * 0.11),
-              Math.max(1.35, 3.45 - threat * 0.12),
+              Math.max(0.35, 1.65 - aggressionPressure * 0.65),
+              Math.max(0.8, 2.6 - aggressionPressure * 0.82),
             ),
       attackAnim: 0,
       telegraph: null,
@@ -1920,6 +1955,7 @@ class EmberfallGame {
   updatePlayer(dt) {
     const player = this.player;
     const position = player.group.position;
+    const frameStart = position.clone();
     const action = this.updatePlayerAction(dt);
     const movementLocked = Boolean(action?.lockMovement);
     const keyboardDirection = new THREE.Vector3(
@@ -1966,6 +2002,11 @@ class EmberfallGame {
       }
     }
 
+    player.velocity
+      .copy(position)
+      .sub(frameStart)
+      .setY(0)
+      .divideScalar(Math.max(dt, 0.001));
     this.snapToSurface(player.group);
     this.recenterWorldIfNeeded();
 
@@ -2175,19 +2216,177 @@ class EmberfallGame {
     return Math.max(0, Number(this.runeRanks[id]) || 0);
   }
 
+  getPlayerOffenseRatio() {
+    const levelStep = Math.max(0, this.player.level - 1);
+    const expectedDamage = 20 + levelStep * 3;
+    const expectedSkillPower = 26 + levelStep * 4;
+    return Math.max(
+      1,
+      this.player.damage / expectedDamage,
+      this.player.skillPower / expectedSkillPower,
+    );
+  }
+
   getThreatDamageMultiplier(threat = this.wave, boss = false) {
     const threatStep = Math.max(0, threat - 1);
-    const runePressure = Math.min(0.42, this.getActiveRuneCount() * 0.034);
-    const levelPressure = Math.min(
-      0.28,
-      Math.max(0, this.player.level - 1) * 0.014,
+    const levelStep = Math.max(0, this.player.level - 1);
+    const threatPressure =
+      1 +
+      threatStep * (boss ? 0.11 : 0.14) +
+      Math.pow(threatStep, 1.28) * (boss ? 0.018 : 0.025);
+    const levelPressure =
+      1 + levelStep * 0.045 + Math.pow(levelStep, 1.16) * 0.008;
+    const powerPressure = Math.min(
+      1.6,
+      Math.max(0, this.getPlayerOffenseRatio() - 1) * 0.32 +
+        this.player.gearScore / 1800,
     );
+    const runePressure = Math.min(
+      0.62,
+      this.getActiveRuneCount() * 0.035,
+    );
+    return threatPressure * levelPressure * (1 + powerPressure + runePressure);
+  }
+
+  getEnemyHealthScale(threat = this.wave, boss = false) {
+    const threatStep = Math.max(0, threat - 1);
+    const offensePressure =
+      1 +
+      Math.min(
+        5,
+        Math.max(0, Math.sqrt(this.getPlayerOffenseRatio()) - 1) * 1.1 +
+          this.player.gearScore / 1500,
+      );
     return (
-      (1 +
-        threatStep * (boss ? 0.22 : 0.29) +
-        Math.pow(threatStep, 1.35) * (boss ? 0.05 : 0.07)) *
-      (1 + runePressure + levelPressure)
+      1 +
+      threatStep * (boss ? 0.34 : 0.25) +
+      Math.pow(threatStep, 1.18) * (boss ? 0.045 : 0.032)
+    ) * offensePressure;
+  }
+
+  getEnemyAttackRate(threat = this.wave) {
+    const threatStep = Math.max(0, threat - 1);
+    const levelStep = Math.max(0, this.player.level - 1);
+    return Math.min(
+      2.1,
+      1 +
+        threatStep * 0.045 +
+        Math.pow(threatStep, 1.12) * 0.012 +
+        levelStep * 0.018 +
+        this.getActiveRuneCount() * 0.008 +
+        Math.max(0, this.getPlayerOffenseRatio() - 1) * 0.055,
     );
+  }
+
+  getEnemyDefensePenetration(threat = this.wave) {
+    const threatStep = Math.max(0, threat - 1);
+    const levelStep = Math.max(0, this.player.level - 1);
+    return Math.min(
+      0.68,
+      threatStep * 0.025 +
+        Math.pow(threatStep, 1.08) * 0.006 +
+        levelStep * 0.005 +
+        this.getActiveRuneCount() * 0.006,
+    );
+  }
+
+  getEnemyMovementMultiplier(threat = this.wave, boss = false) {
+    const threatStep = Math.max(0, threat - 1);
+    const levelStep = Math.max(0, this.player.level - 1);
+    return Math.min(
+      boss ? 1.78 : 2.2,
+      1 +
+        threatStep * 0.024 +
+        levelStep * 0.018 +
+        Math.max(0, this.getPlayerOffenseRatio() - 1) * 0.04,
+    );
+  }
+
+  getEnemyProjectileSpeedMultiplier(threat = this.wave) {
+    const threatStep = Math.max(0, threat - 1);
+    const levelStep = Math.max(0, this.player.level - 1);
+    return Math.min(
+      2.7,
+      1 +
+        threatStep * 0.065 +
+        levelStep * 0.032 +
+        Math.max(0, this.getPlayerOffenseRatio() - 1) * 0.08,
+    );
+  }
+
+  getEnemyVolleySize(type, threat = this.wave) {
+    if (!["wisp", "ranger"].includes(type)) return 1;
+    const threatStep = Math.max(0, threat - 1);
+    const levelStep = Math.max(0, this.player.level - 1);
+    const extraShots =
+      Math.floor(threatStep / 4) +
+      Math.floor(levelStep / 12) +
+      (this.getPlayerOffenseRatio() >= 2.2 ? 1 : 0);
+    return Math.min(type === "wisp" ? 6 : 5, 1 + extraShots);
+  }
+
+  getAdaptiveEnemyDamage(
+    baseDamage,
+    threat,
+    boss,
+    damageType,
+    defensePenetration,
+  ) {
+    const scaledDamage =
+      baseDamage * this.getThreatDamageMultiplier(threat, boss);
+    const levelStep = Math.max(0, this.player.level - 1);
+    const threatStep = Math.max(0, threat - 1);
+    const typePressure = clamp(0.72 + baseDamage / 18, 0.9, 1.6);
+    const targetFraction = Math.min(
+      boss ? 0.16 : 0.1,
+      (0.018 + levelStep * 0.0017 + threatStep * 0.0022) *
+        typePressure,
+    );
+    const defense =
+      damageType === "magic"
+        ? this.player.magicResist
+        : this.player.armor;
+    const effectiveDefense = Math.max(
+      0,
+      defense * (1 - defensePenetration),
+    );
+    const mitigation = 100 / (100 + effectiveDefense * 5);
+    const durabilityFloor =
+      this.player.maxHp * targetFraction / Math.sqrt(mitigation);
+    return Math.max(1, Math.round(Math.max(scaledDamage, durabilityFloor)));
+  }
+
+  refreshEnemyDifficulty() {
+    this.enemies.forEach((enemy) => {
+      if (enemy.dead) return;
+      enemy.attackRate = this.getEnemyAttackRate(enemy.threat);
+      enemy.defensePenetration = this.getEnemyDefensePenetration(enemy.threat);
+      enemy.movementScale = this.getEnemyMovementMultiplier(
+        enemy.threat,
+        enemy.type === "boss",
+      );
+      enemy.projectileSpeedScale = this.getEnemyProjectileSpeedMultiplier(
+        enemy.threat,
+      );
+      enemy.volleySize = this.getEnemyVolleySize(enemy.type, enemy.threat);
+      enemy.damageScale = this.getThreatDamageMultiplier(
+        enemy.threat,
+        enemy.type === "boss",
+      );
+      enemy.damage =
+        this.getAdaptiveEnemyDamage(
+          enemy.baseDamage,
+          enemy.threat,
+          enemy.type === "boss",
+          enemy.damageType,
+          enemy.defensePenetration,
+        ) * (enemy.eventDamageMultiplier ?? 1);
+      enemy.damage = Math.round(enemy.damage);
+      enemy.speed =
+        enemy.baseSpeed *
+        enemy.movementScale *
+        (enemy.eventSpeedMultiplier ?? 1);
+    });
   }
 
   getActiveRuneCount() {
@@ -2772,77 +2971,107 @@ class EmberfallGame {
     const magic = enemy.damageType === "magic";
     this.audio.play(magic ? "enemyMagicShot" : "enemyPhysicalShot", 0.7);
     const color = magic ? 0xa87cff : 0xd9b36f;
-    const group = new THREE.Group();
-    group.position.copy(enemy.group.position).add(
-      new THREE.Vector3(0, enemy.type === "wisp" ? 1.45 : 1.2, 0),
+    const hostileCount = this.projectiles.reduce(
+      (total, projectile) => total + (projectile.hostile ? 1 : 0),
+      0,
     );
-    const core = mesh(
-      magic
-        ? new THREE.OctahedronGeometry(0.2, 0)
-        : new THREE.CylinderGeometry(0.045, 0.045, 0.72, 6),
-      makeMaterial(color, {
-        emissive: color,
-        emissiveIntensity: magic ? 3.6 : 1.5,
-        roughness: 0.25,
-      }),
-      false,
+    const volleySize = Math.min(
+      enemy.volleySize ?? 1,
+      Math.max(0, 56 - hostileCount),
     );
-    if (!magic) core.rotation.x = Math.PI / 2;
-    group.add(core);
-    const halo = mesh(
-      new THREE.TorusGeometry(magic ? 0.31 : 0.17, 0.018, 5, 20),
-      new THREE.MeshBasicMaterial({
-        color,
-        transparent: true,
-        opacity: 0.68,
-        depthWrite: false,
-      }),
-      false,
-    );
-    halo.rotation.x = Math.PI / 2;
-    group.add(halo);
-    this.scene.add(group);
+    if (volleySize <= 0) return;
 
-    const target = this.player.group.position
+    const origin = enemy.group.position
       .clone()
-      .add(new THREE.Vector3(rand(-0.2, 0.2), 1.1, rand(-0.2, 0.2)));
-    const velocity = target
-      .sub(group.position)
-      .normalize()
-      .multiplyScalar(
-        (magic ? 10.5 : 14.5) * (enemy.projectileSpeedScale ?? 1),
+      .add(new THREE.Vector3(0, enemy.type === "wisp" ? 1.45 : 1.2, 0));
+    const projectileSpeed =
+      (magic ? 11.5 : 15.5) * (enemy.projectileSpeedScale ?? 1);
+    const travelDistance = origin.distanceTo(this.player.group.position);
+    const leadTime = Math.min(
+      0.82,
+      (travelDistance / projectileSpeed) * 0.72,
+    );
+    const predictedTarget = this.player.group.position
+      .clone()
+      .add(new THREE.Vector3(0, 1.1, 0))
+      .addScaledVector(this.player.velocity, leadTime);
+    const baseDirection = predictedTarget.sub(origin).normalize();
+    const spreadStep = magic ? 0.14 : 0.09;
+
+    for (let shotIndex = 0; shotIndex < volleySize; shotIndex += 1) {
+      const group = new THREE.Group();
+      group.position.copy(origin);
+      const core = mesh(
+        magic
+          ? new THREE.OctahedronGeometry(0.2, 0)
+          : new THREE.CylinderGeometry(0.045, 0.045, 0.72, 6),
+        makeMaterial(color, {
+          emissive: color,
+          emissiveIntensity: magic ? 3.6 : 1.5,
+          roughness: 0.25,
+        }),
+        false,
       );
-    const trailPositions = Array.from({ length: 7 }, () => group.position.clone());
-    const trailGeometry = new THREE.BufferGeometry();
-    trailGeometry.setAttribute(
-      "position",
-      new THREE.BufferAttribute(new Float32Array(trailPositions.length * 3), 3),
-    );
-    const trailLine = new THREE.Line(
-      trailGeometry,
-      new THREE.LineBasicMaterial({
-        color,
-        transparent: true,
-        opacity: 0.62,
-        depthWrite: false,
-      }),
-    );
-    this.scene.add(trailLine);
-    this.projectiles.push({
-      hostile: true,
-      source: enemy,
-      mesh: group,
-      core,
-      haloA: halo,
-      haloB: halo,
-      trailLine,
-      trailPositions,
-      trailGeometry,
-      velocity,
-      damage: enemy.damage,
-      damageType: enemy.damageType,
-      life: 2.6,
-    });
+      if (!magic) core.rotation.x = Math.PI / 2;
+      group.add(core);
+      const halo = mesh(
+        new THREE.TorusGeometry(magic ? 0.31 : 0.17, 0.018, 5, 20),
+        new THREE.MeshBasicMaterial({
+          color,
+          transparent: true,
+          opacity: 0.68,
+          depthWrite: false,
+        }),
+        false,
+      );
+      halo.rotation.x = Math.PI / 2;
+      group.add(halo);
+      this.scene.add(group);
+
+      const spread =
+        (shotIndex - (volleySize - 1) * 0.5) * spreadStep;
+      const velocity = baseDirection
+        .clone()
+        .applyAxisAngle(new THREE.Vector3(0, 1, 0), spread)
+        .multiplyScalar(projectileSpeed * (1 - Math.abs(spread) * 0.08));
+      const trailPositions = Array.from(
+        { length: 7 },
+        () => group.position.clone(),
+      );
+      const trailGeometry = new THREE.BufferGeometry();
+      trailGeometry.setAttribute(
+        "position",
+        new THREE.BufferAttribute(
+          new Float32Array(trailPositions.length * 3),
+          3,
+        ),
+      );
+      const trailLine = new THREE.Line(
+        trailGeometry,
+        new THREE.LineBasicMaterial({
+          color,
+          transparent: true,
+          opacity: 0.62,
+          depthWrite: false,
+        }),
+      );
+      this.scene.add(trailLine);
+      this.projectiles.push({
+        hostile: true,
+        source: enemy,
+        mesh: group,
+        core,
+        haloA: halo,
+        haloB: halo,
+        trailLine,
+        trailPositions,
+        trailGeometry,
+        velocity,
+        damage: enemy.damage,
+        damageType: enemy.damageType,
+        life: 2.6,
+      });
+    }
   }
 
   removeProjectile(index) {
@@ -3067,16 +3296,16 @@ class EmberfallGame {
           );
         } else if (distance < enemy.preferredRange * 0.68) {
           direction.multiplyScalar(-1).add(separation).normalize();
-          enemy.group.position.addScaledVector(direction, enemy.speed * dt * 0.9);
+          enemy.group.position.addScaledVector(direction, enemy.speed * dt);
         } else {
           const strafe = new THREE.Vector3(-direction.z, 0, direction.x)
             .multiplyScalar(Math.sin(this.elapsed * 1.6 + enemy.phase) * 0.42)
             .add(separation)
             .normalize();
-          enemy.group.position.addScaledVector(strafe, enemy.speed * dt * 0.32);
+          enemy.group.position.addScaledVector(strafe, enemy.speed * dt * 0.48);
           if (enemy.attackCooldown <= 0) {
             enemy.attackCooldown =
-              (enemy.type === "wisp" ? rand(1.45, 1.9) : rand(1.15, 1.55)) /
+              (enemy.type === "wisp" ? rand(1.05, 1.42) : rand(0.86, 1.18)) /
               (enemy.attackRate ?? 1);
             enemy.attackAnim = 0.44;
             this.fireEnemyProjectile(enemy);
@@ -3524,7 +3753,10 @@ class EmberfallGame {
       this.addFeed(`<b>灵火升阶</b> · 当前等级 ${this.player.level}`);
       levelsGained += 1;
     }
-    if (levelsGained > 0) this.queueRuneDraft(levelsGained);
+    if (levelsGained > 0) {
+      this.refreshEnemyDifficulty();
+      this.queueRuneDraft(levelsGained);
+    }
   }
 
   acquireRelic() {
@@ -4548,7 +4780,9 @@ class EmberfallGame {
     const region = this.regionStates.get(this.currentRegionKey);
     const coordinates = region ?? getRegionCoordinates(worldPosition.x, worldPosition.y);
     const enemyDamageMultiplier = this.getThreatDamageMultiplier(this.wave);
-    ui.regionStatus.textContent = `球面坐标 ${coordinates.x} · ${coordinates.z} ｜ 已净化 ${this.regionsCleared} ｜ 敌伤 ×${enemyDamageMultiplier.toFixed(1)}`;
+    const enemyMovementMultiplier = this.getEnemyMovementMultiplier(this.wave);
+    const enemyVolleySize = this.getEnemyVolleySize("wisp", this.wave);
+    ui.regionStatus.textContent = `球面坐标 ${coordinates.x} · ${coordinates.z} ｜ 已净化 ${this.regionsCleared} ｜ 敌伤 ×${enemyDamageMultiplier.toFixed(1)} · 移速 ×${enemyMovementMultiplier.toFixed(1)} · 弹幕 ${enemyVolleySize} 发`;
     const remaining = Math.max(
       0,
       (region?.enemyCount ?? this.waveTotal) - (region?.defeated ?? this.waveDefeated),

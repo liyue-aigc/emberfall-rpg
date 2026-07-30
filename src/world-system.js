@@ -58,7 +58,10 @@ export function getRegionBiome(x, z) {
 export function getRegionThreat(x, z, regionsCleared = 0, playerLevel = 1) {
   const distanceTier = Math.floor(Math.hypot(x, z) * 0.72);
   const clearTier = Math.floor(Math.max(0, regionsCleared) / 3);
-  const levelTier = Math.floor(Math.max(0, playerLevel - 1) * 0.48);
+  const levelStep = Math.max(0, playerLevel - 1);
+  const levelTier = Math.floor(
+    levelStep * 0.72 + Math.max(0, playerLevel - 10) * 0.12,
+  );
   return Math.max(1, 1 + distanceTier + clearTier + levelTier);
 }
 
