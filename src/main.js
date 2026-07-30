@@ -1,4 +1,6 @@
 import * as THREE from "three";
+import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
+import { clone as cloneSkeleton } from "three/addons/utils/SkeletonUtils.js";
 import "./style.css";
 import { LeaderboardService } from "./leaderboard.js";
 import { calculateScore, createRunStats, formatScore, normalizeRunStats } from "./scoring.js";
@@ -343,6 +345,13 @@ class EmberfallGame {
     this.pendingRuneDrafts = 0;
     this.cursedChest = null;
     this.cursedChallenge = null;
+    this.phase2Assets = {
+      loader: new GLTFLoader(),
+      hero: null,
+      jackal: null,
+      toonGradient: this.createToonGradient(),
+      ready: false,
+    };
 
     this.skillState = {
       attack: { cooldown: 0, max: 0.42 },
@@ -387,6 +396,7 @@ class EmberfallGame {
 
     this.createWorld();
     this.createPlayer();
+    void this.loadPhase2Assets();
     this.createCursor();
     this.bindEvents();
     this.resize();
@@ -727,6 +737,7 @@ class EmberfallGame {
     this.scene.add(group);
     this.player.group = group;
     this.player.body = body;
+    this.player.proceduralBodyChildren = [...body.children];
     this.player.rig = {
       torso,
       hoodPivot,
@@ -740,6 +751,171 @@ class EmberfallGame {
       staffGem: gem,
       eye,
     };
+  }
+
+  createToonGradient() {
+    const steps = new Uint8Array([
+      54, 54, 54, 255,
+      116, 116, 116, 255,
+      188, 188, 188, 255,
+      255, 255, 255, 255,
+    ]);
+    const texture = new THREE.DataTexture(steps, 4, 1, THREE.RGBAFormat);
+    texture.minFilter = THREE.NearestFilter;
+    texture.magFilter = THREE.NearestFilter;
+    texture.generateMipmaps = false;
+    texture.needsUpdate = true;
+    return texture;
+  }
+
+  createImportedToonMaterial(source) {
+    const material = new THREE.MeshToonMaterial({
+      color: source.color?.clone() ?? new THREE.Color(0xffffff),
+      map: source.map ?? null,
+      gradientMap: this.phase2Assets.toonGradient,
+      emissive: source.emissive?.clone() ?? new THREE.Color(0x000000),
+      emissiveMap: source.emissiveMap ?? null,
+      emissiveIntensity: source.emissiveIntensity ?? 1,
+      transparent: source.transparent,
+      opacity: source.opacity,
+      alphaTest: source.alphaTest,
+      side: source.side,
+      depthWrite: source.depthWrite,
+      vertexColors: source.vertexColors,
+    });
+    material.name = `${source.name || "Phase2"}_Toon`;
+    material.userData.baseEmissive = material.emissive.getHex();
+    material.userData.baseIntensity = material.emissiveIntensity;
+    return material;
+  }
+
+  prepareImportedModel(model, scale) {
+    const materialCache = new Map();
+    model.scale.setScalar(scale);
+    model.traverse((child) => {
+      if (!child.isMesh) return;
+      child.castShadow = true;
+      child.receiveShadow = true;
+      child.frustumCulled = false;
+      const convert = (source) => {
+        if (!materialCache.has(source.uuid)) {
+          materialCache.set(source.uuid, this.createImportedToonMaterial(source));
+        }
+        return materialCache.get(source.uuid);
+      };
+      child.material = Array.isArray(child.material)
+        ? child.material.map(convert)
+        : convert(child.material);
+    });
+    return [...materialCache.values()];
+  }
+
+  createAnimationController(model, clips, oneShotNames = []) {
+    const mixer = new THREE.AnimationMixer(model);
+    const actions = new Map();
+    const oneShots = new Set(oneShotNames);
+    clips.forEach((clip) => {
+      const action = mixer.clipAction(clip);
+      if (oneShots.has(clip.name)) {
+        action.setLoop(THREE.LoopOnce, 1);
+        action.clampWhenFinished = true;
+      }
+      actions.set(clip.name, action);
+    });
+    return { mixer, actions, current: null, currentName: null, oneShots };
+  }
+
+  switchAnimation(controller, requestedName, fade = 0.12) {
+    if (!controller) return;
+    const name = controller.actions.has(requestedName) ? requestedName : "Idle";
+    if (controller.currentName === name) return;
+    const next = controller.actions.get(name);
+    if (!next) return;
+    const previous = controller.current;
+    if (controller.oneShots.has(name)) {
+      next.setLoop(THREE.LoopOnce, 1);
+      next.clampWhenFinished = true;
+    } else {
+      next.setLoop(THREE.LoopRepeat, Infinity);
+      next.clampWhenFinished = false;
+    }
+    next.reset().setEffectiveTimeScale(1).setEffectiveWeight(1).play();
+    if (previous && previous !== next) previous.fadeOut(fade);
+    next.fadeIn(fade);
+    controller.current = next;
+    controller.currentName = name;
+  }
+
+  async loadPhase2Assets() {
+    const base = import.meta.env.BASE_URL;
+    const [heroResult, jackalResult] = await Promise.allSettled([
+      this.phase2Assets.loader.loadAsync(`${base}assets/models/starforge-traveler-v1.glb`),
+      this.phase2Assets.loader.loadAsync(`${base}assets/models/verdigris-lantern-jackal-v1.glb`),
+    ]);
+
+    if (heroResult.status === "fulfilled") {
+      this.phase2Assets.hero = heroResult.value;
+      this.attachPhase2PlayerModel();
+    } else {
+      console.warn("Phase 2 hero asset unavailable; procedural player retained.", heroResult.reason);
+    }
+
+    if (jackalResult.status === "fulfilled") {
+      this.phase2Assets.jackal = jackalResult.value;
+      this.enemies
+        .filter((enemy) => enemy.type === "wisp" && !enemy.dead)
+        .forEach((enemy) => this.attachPhase2EnemyModel(enemy));
+    } else {
+      console.warn("Phase 2 monster asset unavailable; procedural wisps retained.", jackalResult.reason);
+    }
+
+    this.phase2Assets.ready =
+      heroResult.status === "fulfilled" && jackalResult.status === "fulfilled";
+    document.body.dataset.phase2Assets = this.phase2Assets.ready ? "ready" : "fallback";
+  }
+
+  attachPhase2PlayerModel() {
+    if (!this.phase2Assets.hero || this.player.phase2Model) return;
+    const model = cloneSkeleton(this.phase2Assets.hero.scene);
+    model.name = "StarforgeTraveler_Runtime";
+    this.prepareImportedModel(model, 1.16);
+    this.player.proceduralBodyChildren.forEach((child) => {
+      child.visible = false;
+    });
+    this.player.body.position.y = 0;
+    this.player.body.rotation.x = 0;
+    this.player.body.rotation.z = 0;
+    this.player.body.scale.setScalar(1);
+    this.player.body.add(model);
+    this.player.phase2Model = model;
+    this.player.animation = this.createAnimationController(
+      model,
+      this.phase2Assets.hero.animations,
+      ["Attack_Cast", "Nova_Cast", "Dash", "Ward_Cast", "Hit", "Death"],
+    );
+    this.player.rig.staffGem =
+      model.getObjectByName("StaffGem") ?? this.player.rig.staffGem;
+    this.switchAnimation(this.player.animation, "Idle", 0);
+  }
+
+  attachPhase2EnemyModel(enemy) {
+    if (!this.phase2Assets.jackal || enemy.phase2Model || enemy.dead) return;
+    const model = cloneSkeleton(this.phase2Assets.jackal.scene);
+    model.name = "VerdigrisLanternJackal_Runtime";
+    const materials = this.prepareImportedModel(model, 0.88);
+    enemy.proceduralBodyChildren = [...enemy.body.children];
+    enemy.proceduralBodyChildren.forEach((child) => {
+      child.visible = false;
+    });
+    enemy.body.add(model);
+    enemy.phase2Model = model;
+    enemy.materials.push(...materials);
+    enemy.animation = this.createAnimationController(
+      model,
+      this.phase2Assets.jackal.animations,
+      ["Attack_Aim", "Attack_Volley", "Hit", "Armor_Break", "Death"],
+    );
+    this.switchAnimation(enemy.animation, "Idle", 0);
   }
 
   createCursor() {
@@ -1704,6 +1880,7 @@ class EmberfallGame {
               Math.max(0.8, 2.6 - aggressionPressure * 0.82),
             ),
       attackAnim: 0,
+      hitAnim: 0,
       telegraph: null,
       flash: 0,
       dead: false,
@@ -1928,6 +2105,9 @@ class EmberfallGame {
     shadow.rotation.x = -Math.PI / 2;
     shadow.position.y = 0.02;
     enemy.group.add(shadow);
+    if (enemy.type === "wisp" && this.phase2Assets.jackal) {
+      this.attachPhase2EnemyModel(enemy);
+    }
   }
 
   createEnemyHealthBar(enemy) {
@@ -2107,6 +2287,39 @@ class EmberfallGame {
 
   animatePlayerRig(dt) {
     const player = this.player;
+    if (player.animation) {
+      const actionName = player.action
+        ? {
+            attack: "Attack_Cast",
+            nova: "Nova_Cast",
+            dash: "Dash",
+            ward: "Ward_Cast",
+          }[player.action.name] ?? "Idle"
+        : player.moving
+          ? player.running
+            ? "Run"
+            : "Walk"
+          : "Idle";
+      this.switchAnimation(player.animation, actionName);
+      player.animation.mixer.update(dt);
+      player.body.position.y = THREE.MathUtils.lerp(
+        player.body.position.y,
+        0.015 + Math.sin(this.elapsed * 2.2) * 0.008,
+        Math.min(1, dt * 12),
+      );
+      player.body.rotation.x = THREE.MathUtils.lerp(
+        player.body.rotation.x,
+        0,
+        Math.min(1, dt * 12),
+      );
+      player.body.rotation.z = THREE.MathUtils.lerp(
+        player.body.rotation.z,
+        0,
+        Math.min(1, dt * 12),
+      );
+      player.body.scale.lerp(new THREE.Vector3(1, 1, 1), Math.min(1, dt * 14));
+      return;
+    }
     const rig = player.rig;
     if (!rig) return;
     const action = player.action;
@@ -3237,10 +3450,12 @@ class EmberfallGame {
     for (let i = 0; i < this.enemies.length; i += 1) {
       const enemy = this.enemies[i];
       if (enemy.dead) continue;
+      const frameStart = enemy.group.position.clone();
       enemy.attackCooldown -= dt;
       enemy.specialCooldown -= dt;
       enemy.aggroDelay -= dt;
       enemy.attackAnim = Math.max(0, enemy.attackAnim - dt);
+      enemy.hitAnim = Math.max(0, enemy.hitAnim - dt);
       enemy.flash = Math.max(0, enemy.flash - dt);
 
       enemy.materials.forEach((material) => {
@@ -3328,17 +3543,59 @@ class EmberfallGame {
 
       this.snapToSurface(enemy.group);
       enemy.body.rotation.y = this.lerpAngle(enemy.body.rotation.y, Math.atan2(direction.x, direction.z), 1 - Math.pow(0.004, dt));
-      const bobSpeed = enemy.type === "wisp" ? 4.5 : enemy.type === "ranger" ? 5.4 : 7;
-      const bobAmount = enemy.type === "wisp" ? 0.18 : enemy.type === "ranger" ? 0.065 : 0.045;
+      const floatingWisp = enemy.type === "wisp" && !enemy.phase2Model;
+      const bobSpeed = floatingWisp ? 4.5 : enemy.type === "ranger" ? 5.4 : 7;
+      const bobAmount = floatingWisp ? 0.18 : enemy.type === "ranger" ? 0.065 : 0.045;
       const attackDuration = enemy.type === "boss" ? 0.52 : enemy.ranged ? 0.44 : 0.34;
       const attackPulse = enemy.attackAnim > 0 ? Math.sin((1 - enemy.attackAnim / attackDuration) * Math.PI) : 0;
-      enemy.body.position.y = Math.sin(this.elapsed * bobSpeed + enemy.phase) * bobAmount + (enemy.type === "wisp" ? 0.34 : 0);
-      enemy.body.position.z = THREE.MathUtils.lerp(enemy.body.position.z, -attackPulse * (enemy.type === "boss" ? 0.7 : 0.34), Math.min(1, dt * 14));
-      enemy.body.rotation.x = THREE.MathUtils.lerp(enemy.body.rotation.x, -attackPulse * 0.2, Math.min(1, dt * 12));
-      enemy.body.scale.z = THREE.MathUtils.lerp(enemy.body.scale.z, 1 + attackPulse * 0.18, Math.min(1, dt * 12));
-      enemy.body.scale.y += (1 - enemy.body.scale.y) * Math.min(1, dt * 10);
+      enemy.body.position.y =
+        Math.sin(this.elapsed * bobSpeed + enemy.phase) * bobAmount +
+        (floatingWisp ? 0.34 : 0);
+      if (enemy.animation) {
+        enemy.body.position.z = THREE.MathUtils.lerp(
+          enemy.body.position.z,
+          0,
+          Math.min(1, dt * 14),
+        );
+        enemy.body.rotation.x = THREE.MathUtils.lerp(
+          enemy.body.rotation.x,
+          0,
+          Math.min(1, dt * 12),
+        );
+        enemy.body.scale.lerp(
+          new THREE.Vector3(1, 1, 1),
+          Math.min(1, dt * 12),
+        );
+        this.updatePhase2EnemyAnimation(enemy, frameStart, direction, dt);
+      } else {
+        enemy.body.position.z = THREE.MathUtils.lerp(enemy.body.position.z, -attackPulse * (enemy.type === "boss" ? 0.7 : 0.34), Math.min(1, dt * 14));
+        enemy.body.rotation.x = THREE.MathUtils.lerp(enemy.body.rotation.x, -attackPulse * 0.2, Math.min(1, dt * 12));
+        enemy.body.scale.z = THREE.MathUtils.lerp(enemy.body.scale.z, 1 + attackPulse * 0.18, Math.min(1, dt * 12));
+        enemy.body.scale.y += (1 - enemy.body.scale.y) * Math.min(1, dt * 10);
+      }
       if (enemy.healthBar) enemy.healthBar.quaternion.copy(this.camera.quaternion);
     }
+  }
+
+  updatePhase2EnemyAnimation(enemy, frameStart, facingDirection, dt) {
+    const movement = enemy.group.position.clone().sub(frameStart).setY(0);
+    let actionName = "Idle";
+    if (enemy.hitAnim > 0) {
+      actionName = "Hit";
+    } else if (enemy.attackAnim > 0) {
+      actionName = "Attack_Volley";
+    } else if (movement.lengthSq() > 0.00001) {
+      movement.normalize();
+      const side = facingDirection.x * movement.z - facingDirection.z * movement.x;
+      const forward = facingDirection.dot(movement);
+      if (Math.abs(side) > Math.abs(forward) * 0.72) {
+        actionName = side > 0 ? "Strafe_Right" : "Strafe_Left";
+      } else {
+        actionName = enemy.aggroDelay > 0 ? "Walk" : "Run";
+      }
+    }
+    this.switchAnimation(enemy.animation, actionName, 0.1);
+    enemy.animation.mixer.update(dt);
   }
 
   startBossTelegraph(enemy) {
@@ -3471,6 +3728,7 @@ class EmberfallGame {
     enemy.hp -= dealt;
     this.audio.play(damageType === "magic" ? "magicHit" : "attackHit", critical ? 1.25 : 1);
     enemy.flash = 0.09;
+    enemy.hitAnim = 0.24;
     this.spawnDamageNumber(
       enemy.group.position.clone().add(new THREE.Vector3(0, enemy.type === "boss" ? 3.4 : 2.2, 0)),
       critical ? `${dealt}!` : `${dealt}`,
@@ -3489,6 +3747,7 @@ class EmberfallGame {
 
   killEnemy(enemy) {
     enemy.dead = true;
+    this.switchAnimation(enemy.animation, "Death", 0.06);
     this.audio.play("enemyDeath", enemy.type === "boss" ? 1.8 : 0.9);
     const region = this.regionStates.get(enemy.regionKey);
     if (region) region.defeated += 1;
@@ -3573,7 +3832,8 @@ class EmberfallGame {
       life: 0.42,
       maxLife: 0.42,
       remove: false,
-      update: (effect) => {
+      update: (effect, dt) => {
+        enemy.animation?.mixer.update(dt);
         const t = effect.life / effect.maxLife;
         effect.object.scale.copy(startScale).multiplyScalar(Math.max(0.01, t));
         effect.object.rotation.y += 0.22;

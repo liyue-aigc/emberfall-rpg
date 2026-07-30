@@ -7,3 +7,4 @@ vite-error.log
 server/.vercel/
 server/node_modules/
 server/.env.local
+*.blend1

@@ -77,3 +77,11 @@ npm run build
 打包结果位于 `dist` 文件夹。
 
 GitHub Pages 会在 `main` 分支更新后通过 `.github/workflows/deploy-pages.yml` 自动构建和发布。
+
+## 第二阶段美术垂直切片
+
+- Blender 原创角色“星炉旅者”和远程怪“铜绿灯豺”已接入游戏。
+- 主角包含待机、步行、奔跑、火矢、震环、冲刺、结界、受击与死亡动作。
+- 铜绿灯豺包含待机、步行、奔跑、左右侧移、瞄准、齐射、受击、破甲与死亡动作。
+- GLB 使用 Three.js 四阶卡通材质渲染；资源加载失败时会自动显示原程序化模型。
+- 可重复构建脚本位于 `tools/blender/build_phase2_assets.py`，Blender 源文件和预览位于 `art/phase2/`。
